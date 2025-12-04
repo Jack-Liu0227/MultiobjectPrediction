@@ -40,6 +40,10 @@ class PromptBuilder:
 
         **Task**: Predict {target_properties_list} for the target material using systematic analysis.
 
+        **Reference Samples**:
+
+        Each sample shows values for all target properties.
+
         {reference_section}
 
         **Target Material**:
@@ -166,6 +170,8 @@ class PromptBuilder:
                 ### FEW-SHOT AUGMENTED CORRECTION PROTOCOL
 
                 **Task**: Predict {target_property} for the target material using systematic analysis.
+
+                **Reference Samples**:
 
                 {reference_section}
 
@@ -376,11 +382,16 @@ class PromptBuilder:
         retrieved_samples: List[Tuple[str, float, Dict[str, Any]]],
         target_property: str
     ) -> str:
-        """构建单目标参考样本部分"""
-        if not retrieved_samples:
-            return "**Reference Samples**: No similar training examples found in the database."
+        """
+        构建单目标参考样本部分
 
-        reference_lines = ["**Reference Samples**:", ""]
+        注意：此方法只返回样本列表，不包含标题和说明文字。
+        标题和说明文字由模板或 reference_format 控制。
+        """
+        if not retrieved_samples:
+            return "No similar training examples found in the database."
+
+        reference_lines = []
 
         for sample_text, _, _ in retrieved_samples:
             reference_lines.extend([sample_text, ""])

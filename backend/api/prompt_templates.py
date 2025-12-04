@@ -78,41 +78,7 @@ async def list_templates():
         raise HTTPException(status_code=500, detail=f"列出模板失败: {str(e)}")
 
 
-@router.get("/{template_id}")
-async def get_template(template_id: str):
-    """获取指定模板"""
-    try:
-        template = template_manager.load_template(template_id)
-        if not template:
-            raise HTTPException(status_code=404, detail=f"模板不存在: {template_id}")
-        return template
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"加载模板失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"加载模板失败: {str(e)}")
-
-
-@router.post("/{template_id}")
-async def save_template(template_id: str, template_data: PromptTemplateData):
-    """保存提示词模板"""
-    try:
-        # 转换为字典
-        template_dict = template_data.model_dump()
-
-        # 保存模板
-        success = template_manager.save_template(template_id, template_dict)
-        if not success:
-            raise HTTPException(status_code=500, detail="保存模板失败")
-
-        return {"message": "模板保存成功", "template_id": template_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"保存模板失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"保存模板失败: {str(e)}")
-
-
+# 注意：具体路径的路由必须放在参数化路径之前，否则会被参数化路由匹配
 @router.post("/preview", response_model=PromptPreviewResponse)
 async def preview_template(request: PromptPreviewRequest):
     """预览提示词模板：使用与真实预测一致的构造逻辑渲染完整 Prompt"""
@@ -273,6 +239,42 @@ async def preview_template(request: PromptPreviewRequest):
         raise HTTPException(status_code=500, detail=f"预览模板失败: {str(e)}")
 
 
+# 参数化路由必须放在具体路径路由之后
+@router.get("/{template_id}")
+async def get_template(template_id: str):
+    """获取指定模板"""
+    try:
+        template = template_manager.load_template(template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail=f"模板不存在: {template_id}")
+        return template
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"加载模板失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"加载模板失败: {str(e)}")
+
+
+@router.post("/{template_id}")
+async def save_template(template_id: str, template_data: PromptTemplateData):
+    """保存提示词模板"""
+    try:
+        # 转换为字典
+        template_dict = template_data.model_dump()
+
+        # 保存模板
+        success = template_manager.save_template(template_id, template_dict)
+        if not success:
+            raise HTTPException(status_code=500, detail="保存模板失败")
+
+        return {"message": "模板保存成功", "template_id": template_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"保存模板失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"保存模板失败: {str(e)}")
+
+
 @router.delete("/{template_id}")
 async def delete_template(template_id: str):
     """删除提示词模板"""
@@ -280,7 +282,7 @@ async def delete_template(template_id: str):
         success = template_manager.delete_template(template_id)
         if not success:
             raise HTTPException(status_code=400, detail="删除模板失败（可能是默认模板或不存在）")
-        
+
         return {"message": "模板删除成功", "template_id": template_id}
     except HTTPException:
         raise

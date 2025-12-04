@@ -162,6 +162,24 @@ class RAGPredictionService:
                         predicted_indices = set(range(predicted_count))
                         logger.warning(f"Task {task_id}: 使用备选方案，假设已预测样本索引为 0-{predicted_count-1}")
 
+                # 【关键修复】检查已预测样本中是否存在零值，如果存在则需要重新预测
+                if existing_predictions is not None and not existing_predictions.empty and predicted_indices:
+                    zero_value_indices = self._identify_zero_value_samples(
+                        existing_predictions,
+                        config.target_columns
+                    )
+                    if zero_value_indices:
+                        logger.warning(
+                            f"Task {task_id}: 发现 {len(zero_value_indices)} 个零值样本需要重新预测: "
+                            f"{sorted(zero_value_indices)}"
+                        )
+                        # 从已预测索引中移除零值样本，使其被重新预测
+                        predicted_indices -= zero_value_indices
+                        logger.info(
+                            f"Task {task_id}: 移除零值样本后，有效已预测样本索引: "
+                            f"{sorted(predicted_indices)} (共 {len(predicted_indices)} 个)"
+                        )
+
                 # 检查是否所有样本都已预测
                 if len(predicted_indices) >= config.sample_size:
                     logger.info(
@@ -930,6 +948,62 @@ class RAGPredictionService:
         except Exception as e:
             logger.error(f"加载已有预测结果失败: {e}")
             return None
+
+    def _identify_zero_value_samples(
+        self,
+        predictions_df: pd.DataFrame,
+        target_columns: List[str]
+    ) -> set:
+        """
+        识别预测结果中值为零的样本索引
+
+        Args:
+            predictions_df: 预测结果 DataFrame（必须包含 sample_index 列）
+            target_columns: 目标属性列名列表
+
+        Returns:
+            包含零值的样本索引集合
+        """
+        zero_value_indices = set()
+
+        # 确保 predictions_df 包含 sample_index 列
+        if 'sample_index' not in predictions_df.columns:
+            logger.warning("predictions_df 缺少 sample_index 列，无法识别零值样本")
+            return zero_value_indices
+
+        # 遍历每一行，检查目标列的预测值
+        for _, row in predictions_df.iterrows():
+            sample_index = row.get('sample_index')
+            if pd.isna(sample_index):
+                continue
+
+            sample_index = int(sample_index)
+            has_zero_value = False
+
+            # 检查所有目标列的预测值
+            for target_col in target_columns:
+                pred_col = f"{target_col}_predicted"
+
+                # 如果预测列不存在，跳过（不视为零值）
+                if pred_col not in row.index:
+                    continue
+
+                pred_value = row[pred_col]
+
+                # 检查是否为零值（包括 0, 0.0, NaN, None）
+                # 注意：这里只检查严格的零值，不包括 NaN 和 None
+                # 如果需要也重新预测 NaN 和 None，可以取消下面的注释
+                if pd.notna(pred_value) and pred_value == 0:
+                    has_zero_value = True
+                    logger.debug(
+                        f"样本 {sample_index} 的 {target_col} 预测值为零: {pred_value}"
+                    )
+                    break
+
+            if has_zero_value:
+                zero_value_indices.add(sample_index)
+
+        return zero_value_indices
 
     def _filter_completed_samples(
         self,
