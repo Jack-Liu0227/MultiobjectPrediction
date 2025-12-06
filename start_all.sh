@@ -50,6 +50,75 @@ chmod -R 755 Logs storage 2>/dev/null || true
 echo -e "${GREEN}✓ 目录结构初始化完成${NC}"
 echo ""
 
+# ============================================
+# 第0.5步：检查并清理旧进程
+# ============================================
+echo -e "${YELLOW}检查旧进程...${NC}"
+
+# 临时文件目录
+TEMP_DIR="${SCRIPT_DIR}/.temp"
+mkdir -p "$TEMP_DIR"
+
+BACKEND_PID_FILE="$TEMP_DIR/backend.pid"
+FRONTEND_PID_FILE="$TEMP_DIR/frontend.pid"
+
+# 检查并停止旧的后端进程
+if [ -f "$BACKEND_PID_FILE" ]; then
+    OLD_BACKEND_PID=$(cat "$BACKEND_PID_FILE")
+    if ps -p $OLD_BACKEND_PID > /dev/null 2>&1; then
+        echo -e "${YELLOW}发现旧的后端进程 (PID: $OLD_BACKEND_PID)，正在停止...${NC}"
+        kill $OLD_BACKEND_PID 2>/dev/null || true
+        sleep 2
+        # 如果还在运行，强制杀死
+        if ps -p $OLD_BACKEND_PID > /dev/null 2>&1; then
+            kill -9 $OLD_BACKEND_PID 2>/dev/null || true
+        fi
+        echo -e "${GREEN}✓ 旧的后端进程已停止${NC}"
+    fi
+    rm -f "$BACKEND_PID_FILE"
+fi
+
+# 检查并停止旧的前端进程
+if [ -f "$FRONTEND_PID_FILE" ]; then
+    OLD_FRONTEND_PID=$(cat "$FRONTEND_PID_FILE")
+    if ps -p $OLD_FRONTEND_PID > /dev/null 2>&1; then
+        echo -e "${YELLOW}发现旧的前端进程 (PID: $OLD_FRONTEND_PID)，正在停止...${NC}"
+        kill $OLD_FRONTEND_PID 2>/dev/null || true
+        sleep 2
+        # 如果还在运行，强制杀死
+        if ps -p $OLD_FRONTEND_PID > /dev/null 2>&1; then
+            kill -9 $OLD_FRONTEND_PID 2>/dev/null || true
+        fi
+        echo -e "${GREEN}✓ 旧的前端进程已停止${NC}"
+    fi
+    rm -f "$FRONTEND_PID_FILE"
+fi
+
+# 检查端口占用
+check_port() {
+    local port=$1
+    local service=$2
+    if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1 ; then
+        echo -e "${YELLOW}⚠ 端口 $port 已被占用 ($service)${NC}"
+        local pid=$(lsof -Pi :$port -sTCP:LISTEN -t)
+        echo -e "${YELLOW}  占用进程 PID: $pid${NC}"
+        echo -e "${YELLOW}  正在尝试停止占用进程...${NC}"
+        kill $pid 2>/dev/null || true
+        sleep 2
+        if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1 ; then
+            echo -e "${RED}✗ 无法释放端口 $port，请手动停止占用进程${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}✓ 端口 $port 已释放${NC}"
+    fi
+}
+
+check_port 8000 "后端"
+check_port 3000 "前端"
+
+echo -e "${GREEN}✓ 进程检查完成${NC}"
+echo ""
+
 # 检查后端目录
 if [ ! -d "backend" ]; then
     echo -e "${RED}错误: 找不到 backend 目录${NC}"
@@ -284,10 +353,22 @@ echo ""
 echo -e "${YELLOW}[6/6] 启动服务...${NC}"
 echo ""
 
-# 创建临时目录存储 PID
-TEMP_DIR=$(mktemp -d)
-BACKEND_PID_FILE="$TEMP_DIR/backend.pid"
-FRONTEND_PID_FILE="$TEMP_DIR/frontend.pid"
+# 清理旧日志文件（避免文件锁定问题）
+echo -e "${BLUE}清理旧日志文件...${NC}"
+# 备份旧日志（如果存在且不为空）
+if [ -f "$SCRIPT_DIR/Logs/backend.log" ] && [ -s "$SCRIPT_DIR/Logs/backend.log" ]; then
+    mv "$SCRIPT_DIR/Logs/backend.log" "$SCRIPT_DIR/Logs/backend.log.old" 2>/dev/null || true
+fi
+if [ -f "$SCRIPT_DIR/Logs/frontend.log" ] && [ -s "$SCRIPT_DIR/Logs/frontend.log" ]; then
+    mv "$SCRIPT_DIR/Logs/frontend.log" "$SCRIPT_DIR/Logs/frontend.log.old" 2>/dev/null || true
+fi
+
+# 创建新的空日志文件
+touch "$SCRIPT_DIR/Logs/backend.log"
+touch "$SCRIPT_DIR/Logs/frontend.log"
+chmod 644 "$SCRIPT_DIR/Logs/backend.log" "$SCRIPT_DIR/Logs/frontend.log"
+
+echo -e "${GREEN}✓ 日志文件已准备${NC}"
 
 # 启动后端
 echo -e "${GREEN}启动后端服务 (http://localhost:8000)...${NC}"
@@ -298,7 +379,8 @@ export SENTENCE_TRANSFORMERS_HOME="$SCRIPT_DIR/all-MiniLM-L6-v2"
 export TRANSFORMERS_OFFLINE=1
 
 # 使用 uv run 启动后端服务，日志输出到 Logs 目录
-uv run uvicorn main:app --reload --port 8000 > "$SCRIPT_DIR/Logs/backend.log" 2>&1 &
+# 使用追加模式 >> 而不是覆盖模式 >，避免文件锁定
+nohup uv run uvicorn main:app --reload --port 8000 >> "$SCRIPT_DIR/Logs/backend.log" 2>&1 &
 
 BACKEND_PID=$!
 echo $BACKEND_PID > "$BACKEND_PID_FILE"
@@ -332,7 +414,8 @@ fi
 echo ""
 echo -e "${GREEN}启动前端服务 (http://localhost:3000)...${NC}"
 cd frontend
-npm run dev > "$SCRIPT_DIR/Logs/frontend.log" 2>&1 &
+# 使用 nohup 和追加模式，避免文件锁定
+nohup npm run dev >> "$SCRIPT_DIR/Logs/frontend.log" 2>&1 &
 FRONTEND_PID=$!
 echo $FRONTEND_PID > "$FRONTEND_PID_FILE"
 echo -e "${GREEN}✓ 前端已启动 (PID: $FRONTEND_PID)${NC}"

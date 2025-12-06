@@ -475,7 +475,7 @@ export default function TasksPage() {
       )}
 
       {!loading && tasks.length > 0 && (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="bg-white rounded-lg shadow overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
@@ -605,8 +605,8 @@ export default function TasksPage() {
                       </div>
                     )}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <div className="flex gap-2 flex-wrap">
+                  <td className="px-6 py-4 text-sm font-medium">
+                    <div className="flex gap-2 flex-wrap min-w-[300px]">
                       {task.result_id && (
                         <button
                           onClick={() => handleViewResult(task.result_id!)}

@@ -6,16 +6,11 @@ LLM 模型配置 API
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-import json
 import logging
-from pathlib import Path
+from services.llm_config_loader import load_llm_config
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# 配置文件路径
-CONFIG_DIR = Path(__file__).parent.parent / "config"
-LLM_CONFIG_FILE = CONFIG_DIR / "llm_models.json"
 
 
 class LLMModel(BaseModel):
@@ -42,28 +37,26 @@ class LLMConfigResponse(BaseModel):
 async def get_available_models():
     """
     获取可用的 LLM 模型列表
-    
-    返回所有已配置且启用的模型
+
+    返回所有已配置且启用的模型（已替换环境变量）
     """
     try:
-        # 读取配置文件
-        if not LLM_CONFIG_FILE.exists():
-            raise HTTPException(status_code=500, detail="模型配置文件不存在")
-        
-        with open(LLM_CONFIG_FILE, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        
+        # 使用 llm_config_loader 加载配置（自动替换环境变量）
+        config = load_llm_config()
+
+        if not config or not config.get('models'):
+            raise HTTPException(status_code=500, detail="模型配置为空或加载失败")
+
         # 过滤启用的模型
         enabled_models = [m for m in config['models'] if m.get('enabled', True)]
-        
+
         return LLMConfigResponse(
             models=enabled_models,
             default_model=config.get('default_model', enabled_models[0]['id'] if enabled_models else '')
         )
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"配置文件格式错误: {e}")
-        raise HTTPException(status_code=500, detail="配置文件格式错误")
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取模型配置失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取模型配置失败: {str(e)}")
@@ -73,24 +66,24 @@ async def get_available_models():
 async def get_model_config(model_id: str):
     """
     获取指定模型的配置信息
-    
+
     Args:
         model_id: 模型 ID
     """
     try:
-        if not LLM_CONFIG_FILE.exists():
-            raise HTTPException(status_code=500, detail="模型配置文件不存在")
-        
-        with open(LLM_CONFIG_FILE, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        
+        # 使用 llm_config_loader 加载配置（自动替换环境变量）
+        config = load_llm_config()
+
+        if not config or not config.get('models'):
+            raise HTTPException(status_code=500, detail="模型配置为空或加载失败")
+
         # 查找指定模型
         for model in config['models']:
             if model['id'] == model_id:
                 return LLMModel(**model)
-        
+
         raise HTTPException(status_code=404, detail=f"模型不存在: {model_id}")
-        
+
     except HTTPException:
         raise
     except Exception as e:

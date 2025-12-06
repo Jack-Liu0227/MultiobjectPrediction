@@ -39,30 +39,160 @@ chmod +x start_all.sh
 
 ---
 
-## 📋 手动启动
+## 📦 完整安装指南（从零开始）
 
-如果自动启动脚本遇到问题，可以手动启动：
+### 前置要求
 
-### 启动后端
+在开始之前，请确保您的系统已安装以下软件：
+
+1. **Python 3.10+**
+   - 下载地址：https://www.python.org/downloads/
+   - 安装时勾选 "Add Python to PATH"
+   - 验证安装：`python --version`
+
+2. **Node.js 16+**
+   - 下载地址：https://nodejs.org/
+   - 推荐安装 LTS 版本
+   - 验证安装：`node --version` 和 `npm --version`
+
+3. **Git**（可选，用于克隆项目）
+   - 下载地址：https://git-scm.com/
+
+### 第一步：下载 all-MiniLM-L6-v2 模型
+
+本项目使用 `all-MiniLM-L6-v2` 模型进行向量嵌入，需要手动下载到项目根目录。
+
+**方法 1：从 Hugging Face 下载（推荐）**
+
+1. 访问模型页面：https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+2. 点击 "Files and versions" 标签
+3. 下载以下必需文件到项目根目录的 `all-MiniLM-L6-v2` 文件夹：
+   - `config.json`
+   - `model.safetensors`
+   - `tokenizer.json`
+   - `tokenizer_config.json`
+   - `vocab.txt`
+   - `modules.json`
+   - `config_sentence_transformers.json`
+   - `sentence_bert_config.json`
+   - `special_tokens_map.json`
+   - `1_Pooling/config.json`（在 `1_Pooling` 子目录中）
+   - `2_Normalize/config.json`（在 `2_Normalize` 子目录中）
+
+**方法 2：使用 Python 脚本自动下载**
+
+在项目根目录创建并运行以下脚本：
+
+```python
+# download_model.py
+from sentence_transformers import SentenceTransformer
+import os
+
+# 设置下载目录为项目根目录
+model_name = "all-MiniLM-L6-v2"
+save_path = os.path.join(os.getcwd(), model_name)
+
+print(f"正在下载模型到: {save_path}")
+model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+model.save(save_path)
+print("模型下载完成！")
+```
+
+运行脚本：
+```bash
+pip install sentence-transformers
+python download_model.py
+```
+
+**验证模型文件**
+
+确保项目根目录下的 `all-MiniLM-L6-v2` 文件夹包含以下结构：
+```
+all-MiniLM-L6-v2/
+├── 1_Pooling/
+│   └── config.json
+├── 2_Normalize/
+│   └── config.json
+├── config.json
+├── config_sentence_transformers.json
+├── model.safetensors
+├── modules.json
+├── sentence_bert_config.json
+├── special_tokens_map.json
+├── tokenizer.json
+├── tokenizer_config.json
+└── vocab.txt
+```
+
+### 第二步：配置环境变量
+
+在项目根目录创建 `.env` 文件，配置 LLM API 密钥：
+
+```env
+# DeepSeek API（推荐，性价比高）
+DEEPSEEK_API_KEY=your-deepseek-api-key-here
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+
+# Gemini API（可选）
+GEMINI_API_KEY=your-gemini-api-key-here
+GEMINI_BASE_URL=https://your-gemini-proxy-url/v1
+
+# 其他可选配置
+# OPENROUTER_API_KEY=your-openrouter-api-key
+# ONEAPI_BASE_URL=http://your-oneapi-server
+# ONEAPI_API_KEY=your-oneapi-key
+```
+
+**获取 API 密钥：**
+- **DeepSeek**: 访问 https://platform.deepseek.com/ 注册并获取 API Key
+- **Gemini**: 访问 https://ai.google.dev/ 获取 API Key（或使用代理服务）
+
+### 第三步：安装项目依赖
+
+**后端依赖**
 
 ```bash
 cd backend
-python -m venv venv  # 首次运行需要创建虚拟环境
-
-# Windows
-venv\Scripts\activate
-# Linux/Mac
-source venv/bin/activate
-
-pip install fastapi uvicorn pandas numpy scikit-learn pydantic
-python -m uvicorn main:app --reload --port 8000
+pip install -r requirements.txt
+cd ..
 ```
 
-### 启动前端
+**前端依赖**
 
 ```bash
 cd frontend
-npm install  # 首次运行需要安装依赖
+npm install
+cd ..
+```
+
+### 第四步：启动项目
+
+**使用自动启动脚本（推荐）**
+
+Windows:
+```bash
+start_all.bat
+```
+
+Linux/Mac:
+```bash
+chmod +x start_all.sh
+./start_all.sh
+```
+
+**手动启动**
+
+如果自动启动脚本遇到问题，可以手动启动：
+
+1. 启动后端：
+```bash
+cd backend
+python -m uvicorn main:app --reload --port 8000
+```
+
+2. 启动前端（新开一个终端）：
+```bash
+cd frontend
 npm run dev
 ```
 
@@ -79,23 +209,34 @@ npm run dev
 
 ---
 
-## 📦 环境要求
+## 📦 系统要求
 
-### 必需
+### 硬件要求
+- **内存**: 至少 4GB RAM（推荐 8GB+）
+- **存储**: 至少 5GB 可用空间（包括模型文件）
+- **处理器**: 支持 AVX 指令集的现代 CPU
+
+### 软件要求
 - **Python**: 3.10 或更高版本
 - **Node.js**: 16 或更高版本
 - **npm**: 随 Node.js 安装
+- **操作系统**: Windows 10+, macOS 10.15+, 或 Linux
 
-### Python 依赖
-- fastapi
-- uvicorn
-- pandas
-- numpy
-- scikit-learn
-- pydantic
-- sentence-transformers（用于向量嵌入）
+### 主要依赖包
 
-### Node.js 依赖
+**Python 依赖**（详见 `backend/requirements.txt`）
+- fastapi >= 0.104.0
+- uvicorn[standard] >= 0.24.0
+- pandas >= 2.0.0
+- numpy >= 1.24.0
+- sentence-transformers >= 2.2.0（RAG 向量嵌入）
+- litellm >= 1.0.0（LLM 调用）
+- scikit-learn >= 1.3.0
+- torch >= 2.0.0
+- plotly >= 5.17.0（可视化）
+- python-dotenv >= 1.0.0（环境变量）
+
+**Node.js 依赖**（详见 `frontend/package.json`）
 - next
 - react
 - typescript
@@ -167,22 +308,63 @@ Ti-6Al-4V,Solution treated at 980°C for 2h + aged at 600°C for 6h,1100,10.8
 
 ---
 
-## 🔧 配置
+## 🔧 高级配置
 
-### 环境变量
+### 环境变量配置
 
-创建 `.env` 文件（项目根目录）：
+项目支持通过 `.env` 文件配置 LLM API 密钥和服务地址。在项目根目录创建 `.env` 文件：
 
 ```env
-# API Keys（根据使用的模型提供商配置）
-GEMINI_API_KEY=your-gemini-api-key
-DEEPSEEK_API_KEY=your-deepseek-api-key
-OPENROUTER_API_KEY=your-openrouter-api-key
+# DeepSeek API 配置
+DEEPSEEK_API_KEY=sk-your-deepseek-api-key
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 
-# OneAPI 配置（可选）
+# Gemini API 配置
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1
+
+# OpenRouter API 配置（可选）
+OPENROUTER_API_KEY=your-openrouter-api-key
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+
+# OneAPI 配置（可选，用于统一 API 管理）
 ONEAPI_BASE_URL=http://your-oneapi-server
 ONEAPI_API_KEY=your-oneapi-key
 ```
+
+**注意**：
+- 环境变量配置优先级高于 `backend/config/llm_models.json` 中的硬编码配置
+- 建议使用环境变量以避免 API 密钥泄露
+- `.env` 文件已在 `.gitignore` 中，不会被提交到版本控制
+
+### LLM 模型配置
+
+编辑 `backend/config/llm_models.json` 可以添加或修改可用的 LLM 模型：
+
+```json
+{
+  "models": [
+    {
+      "id": "deepseek-chat",
+      "name": "DeepSeek Chat",
+      "provider": "deepseek",
+      "api_key": "${DEEPSEEK_API_KEY}",
+      "base_url": "${DEEPSEEK_BASE_URL}",
+      "model": "openai/deepseek-chat",
+      "description": "DeepSeek 对话模型，性价比高",
+      "temperature_range": [0.0, 2.0],
+      "default_temperature": 0.0,
+      "enabled": true
+    }
+  ],
+  "default_model": "deepseek-chat"
+}
+```
+
+**配置说明**：
+- `${VARIABLE_NAME}` 格式会自动从环境变量读取
+- `api_key` 和 `base_url` 支持环境变量替换
+- `enabled: false` 可以禁用某个模型
 
 ---
 
@@ -199,16 +381,61 @@ ONEAPI_API_KEY=your-oneapi-key
 ## 🐛 常见问题
 
 ### Q: 启动脚本报错 "找不到 Python"
-**A**: 确保已安装 Python 3.10+ 并添加到系统 PATH。
+**A**:
+1. 确保已安装 Python 3.10+
+2. 验证安装：`python --version` 或 `python3 --version`
+3. Windows 用户：确保安装时勾选了 "Add Python to PATH"
+4. 手动添加到 PATH：系统环境变量 → Path → 添加 Python 安装目录
+
+### Q: 找不到 all-MiniLM-L6-v2 模型
+**A**:
+1. 确保已按照"第一步：下载 all-MiniLM-L6-v2 模型"完成模型下载
+2. 验证模型目录结构：项目根目录下应有 `all-MiniLM-L6-v2` 文件夹
+3. 检查必需文件是否完整（config.json, model.safetensors 等）
+4. 运行 `python backend/check_system.py` 检查系统配置
 
 ### Q: 前端依赖安装失败
-**A**: 尝试删除 `frontend/node_modules` 目录后重新运行 `npm install`。
+**A**:
+1. 删除 `frontend/node_modules` 和 `frontend/package-lock.json`
+2. 重新运行 `npm install`
+3. 如果仍然失败，尝试使用 `npm install --legacy-peer-deps`
+4. 检查 Node.js 版本是否 >= 16
 
 ### Q: 后端启动失败
-**A**: 检查端口 8000 是否被占用，或查看后端日志文件。
+**A**:
+1. 检查端口 8000 是否被占用：`netstat -ano | findstr :8000`（Windows）或 `lsof -i :8000`（Linux/Mac）
+2. 查看后端日志：`Logs/backend.log`
+3. 确保所有 Python 依赖已安装：`pip install -r backend/requirements.txt`
+4. 检查 `.env` 文件是否正确配置
 
 ### Q: 预测任务一直卡在 "pending" 状态
-**A**: 检查 API key 配置是否正确，或查看后端日志。
+**A**:
+1. 检查 `.env` 文件中的 API key 是否正确配置
+2. 查看后端日志：`Logs/backend.log` 查找错误信息
+3. 验证 API key 是否有效（访问对应平台检查）
+4. 检查网络连接是否正常
+5. 尝试切换到其他 LLM 模型
+
+### Q: 模型下载速度慢或失败
+**A**:
+1. 使用国内镜像：设置环境变量 `HF_ENDPOINT=https://hf-mirror.com`
+2. 使用代理下载
+3. 手动从 Hugging Face 下载文件后放到 `all-MiniLM-L6-v2` 目录
+4. 使用提供的 Python 脚本自动下载
+
+### Q: 内存不足错误
+**A**:
+1. 减少 `workers` 参数（默认 5，可降至 1-2）
+2. 减少 `sample_size` 参数
+3. 关闭其他占用内存的程序
+4. 升级系统内存（推荐 8GB+）
+
+### Q: CORS 错误
+**A**:
+1. 确保前端和后端都已启动
+2. 检查前端访问的 API 地址是否正确（应为 http://localhost:8000）
+3. 查看 `backend/main.py` 中的 CORS 配置
+4. 清除浏览器缓存后重试
 
 ---
 

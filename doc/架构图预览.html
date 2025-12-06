@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多目标材料性能预测系统 - 架构图</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Microsoft YaHei', 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .tab-button {
+            padding: 12px 24px;
+            background: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .tab-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        
+        .tab-button.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .diagram-container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+            display: none;
+        }
+        
+        .diagram-container.active {
+            display: block;
+        }
+        
+        .diagram-title {
+            font-size: 1.8em;
+            color: #333;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+        }
+        
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            margin: 20px 0;
+        }
+        
+        .description {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+            line-height: 1.8;
+        }
+        
+        .description h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        .footer {
+            text-align: center;
+            color: white;
+            margin-top: 30px;
+            opacity: 0.8;
+        }
+        
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.8em;
+            }
+            
+            .diagram-container {
+                padding: 15px;
+            }
+            
+            .tab-button {
+                padding: 10px 16px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏗️ 多目标材料性能预测系统</h1>
+            <p>项目架构可视化</p>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab-button active" onclick="showDiagram('architecture')">系统架构图</button>
+            <button class="tab-button" onclick="showDiagram('flow')">预测流程时序图</button>
+        </div>
+        
+        <div id="architecture" class="diagram-container active">
+            <h2 class="diagram-title">📊 系统架构图</h2>
+            <div class="mermaid">
+graph TB
+    subgraph Frontend["前端层 (Next.js + React)"]
+        UI1[数据上传页面<br/>datasets.tsx]
+        UI2[预测配置页面<br/>prediction.tsx]
+        UI3["结果展示页面<br/>results/[id].tsx"]
+        UI4[任务管理页面<br/>tasks.tsx]
+        
+        API_CLIENT[API 客户端<br/>lib/api.ts]
+        
+        UI1 --> API_CLIENT
+        UI2 --> API_CLIENT
+        UI3 --> API_CLIENT
+        UI4 --> API_CLIENT
+    end
+    
+    subgraph Backend["后端层 (FastAPI)"]
+        subgraph API_Routes["API 路由层"]
+            UPLOAD_API[Upload API<br/>文件上传]
+            PRED_API[Prediction API<br/>预测任务]
+            RESULT_API[Results API<br/>结果查询]
+            TASK_API[Tasks API<br/>任务管理]
+            LLM_API[LLM Config API<br/>模型配置]
+        end
+
+        subgraph Services["业务逻辑层"]
+            RAG_SERVICE[RAG 预测服务<br/>rag_prediction_service]
+            RAG_ENGINE[RAG 引擎<br/>simple_rag_engine]
+            TASK_MGR[任务管理器<br/>task_manager]
+            PARETO[Pareto 分析器<br/>pareto_analyzer]
+            PROMPT[提示词构建器<br/>prompt_builder]
+            LLM_LOADER[LLM 配置加载器<br/>llm_config_loader]
+            FILE_HANDLER[文件处理器<br/>file_handler]
+        end
+
+        subgraph Database["数据访问层"]
+            DATASET_DB[(数据集数据库<br/>dataset_db)]
+            TASK_DB[(任务数据库<br/>task_db)]
+            SQLITE[(SQLite)]
+        end
+    end
+
+    subgraph External["外部服务层"]
+        LLM_SERVICES[LLM API 服务<br/>DeepSeek/Gemini/OpenRouter]
+        EMBED_MODEL[向量嵌入模型<br/>all-MiniLM-L6-v2]
+        FILE_STORAGE[文件存储<br/>uploads/results/cache]
+    end
+
+    subgraph Config["配置层"]
+        ENV_FILE[.env<br/>环境变量]
+        LLM_CONFIG[llm_models.json<br/>模型配置]
+    end
+
+    API_CLIENT -->|HTTP/REST| UPLOAD_API
+    API_CLIENT -->|HTTP/REST| PRED_API
+    API_CLIENT -->|HTTP/REST| RESULT_API
+    API_CLIENT -->|HTTP/REST| TASK_API
+    API_CLIENT -->|HTTP/REST| LLM_API
+
+    UPLOAD_API --> FILE_HANDLER
+    PRED_API --> RAG_SERVICE
+    RESULT_API --> RAG_SERVICE
+    TASK_API --> TASK_MGR
+    LLM_API --> LLM_LOADER
+
+    RAG_SERVICE --> RAG_ENGINE
+    RAG_SERVICE --> TASK_MGR
+    RAG_SERVICE --> PARETO
+    RAG_ENGINE --> PROMPT
+    RAG_ENGINE --> LLM_LOADER
+
+    RAG_SERVICE --> DATASET_DB
+    TASK_MGR --> TASK_DB
+    DATASET_DB --> SQLITE
+    TASK_DB --> SQLITE
+
+    RAG_ENGINE --> LLM_SERVICES
+    RAG_ENGINE --> EMBED_MODEL
+    FILE_HANDLER --> FILE_STORAGE
+    RAG_SERVICE --> FILE_STORAGE
+
+    ENV_FILE -.->|加载| LLM_LOADER
+    LLM_CONFIG -.->|读取| LLM_LOADER
+
+    classDef frontend fill:#e1f5ff,stroke:#01579b,stroke-width:2px
+    classDef backend fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef service fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef database fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+    classDef external fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    classDef config fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+
+    class UI1,UI2,UI3,UI4,API_CLIENT frontend
+    class UPLOAD_API,PRED_API,RESULT_API,TASK_API,LLM_API backend
+    class RAG_SERVICE,RAG_ENGINE,TASK_MGR,PARETO,PROMPT,LLM_LOADER,FILE_HANDLER service
+    class DATASET_DB,TASK_DB,SQLITE database
+    class LLM_SERVICES,EMBED_MODEL,FILE_STORAGE external
+    class ENV_FILE,LLM_CONFIG config
+            </div>
+            <div class="description">
+                <h3>📝 说明</h3>
+                <p>本图展示了系统的整体架构，包括：</p>
+                <ul>
+                    <li><strong>前端层</strong>：基于 Next.js 和 React 的用户界面</li>
+                    <li><strong>后端层</strong>：FastAPI 实现的 API 路由和业务逻辑</li>
+                    <li><strong>数据访问层</strong>：SQLite 数据库管理</li>
+                    <li><strong>外部服务层</strong>：LLM API 和向量嵌入模型</li>
+                    <li><strong>配置层</strong>：环境变量和模型配置</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="flow" class="diagram-container">
+            <h2 class="diagram-title">🔄 预测流程时序图</h2>
+            <div class="mermaid">
+sequenceDiagram
+    participant User as 用户
+    participant Frontend as 前端界面
+    participant API as API 路由
+    participant RAGService as RAG 预测服务
+    participant RAGEngine as RAG 引擎
+    participant TaskMgr as 任务管理器
+    participant DB as 数据库
+    participant LLM as LLM API
+    participant Embed as 向量模型
+    participant Pareto as Pareto 分析器
+
+    User->>Frontend: 1. 上传 CSV 数据文件
+    Frontend->>API: POST /api/upload
+    API->>DB: 保存文件信息
+    DB-->>API: 返回文件 ID
+    API-->>Frontend: 返回上传成功
+    Frontend-->>User: 显示列选择界面
+
+    User->>Frontend: 2. 选择列和配置参数
+    Note over User,Frontend: 组成列、热处理列、目标列<br/>训练比例、RAG 参数、模型选择
+
+    User->>Frontend: 3. 点击"开始预测"
+    Frontend->>API: POST /api/prediction/start
+    API->>RAGService: 创建预测任务
+    RAGService->>TaskMgr: 注册任务
+    TaskMgr->>DB: 保存任务状态 (pending)
+    RAGService-->>API: 返回 task_id
+    API-->>Frontend: 返回 task_id
+    Frontend-->>User: 显示任务进度界面
+
+    Note over RAGService,Pareto: 后台异步执行
+
+    RAGService->>TaskMgr: 更新状态 (running)
+    RAGService->>DB: 读取数据文件
+    RAGService->>RAGService: 数据划分 (训练集/测试集)
+
+    RAGService->>Embed: 嵌入训练集样本
+    Embed-->>RAGService: 返回训练集向量
+
+    loop 对每个测试样本
+        RAGService->>Embed: 嵌入测试样本
+        Embed-->>RAGService: 返回测试样本向量
+
+        RAGService->>RAGEngine: 检索相似样本
+        RAGEngine->>RAGEngine: 计算余弦相似度
+        RAGEngine-->>RAGService: 返回 Top-K 相似样本
+
+        RAGService->>RAGEngine: 生成预测
+        RAGEngine->>RAGEngine: 构建提示词
+        RAGEngine->>LLM: 调用 LLM API
+        LLM-->>RAGEngine: 返回预测结果
+        RAGEngine->>RAGEngine: 解析预测值
+        RAGEngine-->>RAGService: 返回多目标预测
+
+        RAGService->>DB: 保存预测结果
+        RAGService->>TaskMgr: 更新进度
+    end
+
+    RAGService->>RAGService: 计算评估指标<br/>(R², RMSE, MAE, MAPE)
+    RAGService->>Pareto: Pareto 前沿分析
+    Pareto->>Pareto: 识别 Pareto 最优解
+    Pareto->>Pareto: 计算优化指标<br/>(Hypervolume, Spacing, Spread)
+    Pareto-->>RAGService: 返回分析结果
+
+    RAGService->>DB: 保存最终结果
+    RAGService->>TaskMgr: 更新状态 (completed)
+
+    loop 轮询任务状态
+        Frontend->>API: GET /api/tasks/{task_id}
+        API->>TaskMgr: 查询任务状态
+        TaskMgr->>DB: 读取任务信息
+        DB-->>TaskMgr: 返回任务数据
+        TaskMgr-->>API: 返回任务状态
+        API-->>Frontend: 返回状态和进度
+        Frontend-->>User: 更新进度条
+    end
+
+    Frontend->>API: GET /api/results/{task_id}
+    API->>RAGService: 获取预测结果
+    RAGService->>DB: 读取结果数据
+    DB-->>RAGService: 返回完整结果
+    RAGService-->>API: 返回结果 JSON
+    API-->>Frontend: 返回结果数据
+
+    Frontend->>Frontend: 渲染结果表格
+    Frontend->>Frontend: 绘制可视化图表
+    Frontend-->>User: 展示预测结果和分析
+
+    User->>Frontend: 4. 下载结果 CSV
+    Frontend->>API: GET /api/results/{task_id}/download
+    API->>RAGService: 生成 CSV 文件
+    RAGService-->>API: 返回 CSV 文件
+    API-->>Frontend: 返回文件流
+    Frontend-->>User: 下载完成
+            </div>
+            <div class="description">
+                <h3>📝 说明</h3>
+                <p>本图展示了完整的预测流程，包括：</p>
+                <ol>
+                    <li><strong>数据上传</strong>：用户上传 CSV 文件</li>
+                    <li><strong>配置参数</strong>：选择列和配置 RAG/LLM 参数</li>
+                    <li><strong>异步预测</strong>：后台执行 RAG 检索和 LLM 预测</li>
+                    <li><strong>Pareto 分析</strong>：多目标优化分析</li>
+                    <li><strong>结果展示</strong>：可视化展示预测结果</li>
+                </ol>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>多目标材料性能预测系统 | 版本 1.0 | 2025-12-06</p>
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'default',
+            securityLevel: 'loose',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            },
+            sequence: {
+                useMaxWidth: true,
+                wrap: true
+            }
+        });
+
+        function showDiagram(diagramId) {
+            // 隐藏所有图表
+            document.querySelectorAll('.diagram-container').forEach(container => {
+                container.classList.remove('active');
+            });
+
+            // 移除所有按钮的 active 状态
+            document.querySelectorAll('.tab-button').forEach(button => {
+                button.classList.remove('active');
+            });
+
+            // 显示选中的图表
+            document.getElementById(diagramId).classList.add('active');
+
+            // 激活对应的按钮
+            event.target.classList.add('active');
+        }
+    </script>
+</body>
+</html>
+
