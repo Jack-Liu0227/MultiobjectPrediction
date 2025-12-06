@@ -520,6 +520,13 @@ export default function PredictionPage() {
               >
                 📋 任务列表
               </button>
+              <button
+                onClick={() => router.push('/task-comparison')}
+                className="px-4 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-200"
+                title="对比多个任务的预测结果"
+              >
+                📊 任务对比
+              </button>
             </div>
           </div>
         </div>

@@ -509,9 +509,26 @@ export default function TasksPage() {
   // 任务列表视图
   return (
     <div className="container mx-auto px-4 py-8">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold mb-2">任务历史</h1>
-        <p className="text-gray-600">查看和管理所有预测任务</p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold mb-2">任务历史</h1>
+          <p className="text-gray-600">查看和管理所有预测任务</p>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={() => router.push('/prediction')}
+            className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-200"
+          >
+            🔮 新建预测
+          </button>
+          <button
+            onClick={() => router.push('/task-comparison')}
+            className="px-4 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-200"
+            title="对比多个任务的预测结果"
+          >
+            📊 任务对比
+          </button>
+        </div>
       </div>
 
       {/* 成功提示消息 */}

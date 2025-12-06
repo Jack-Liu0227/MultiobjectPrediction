@@ -51,7 +51,9 @@ class FlexibleJSON(TypeDecorator):
             return json.loads(value)
         except json.JSONDecodeError:
             # 解析失败，可能是旧格式的字符串
-            logger.warning(f"Failed to parse JSON, treating as string: {value[:50]}")
+            # 只在非常规列名时记录警告（避免日志噪音）
+            if value not in ['Processing_Description', 'Composition', 'composition']:
+                logger.warning(f"Converting non-JSON field to array format: {value[:50]}")
             # 将字符串转换为数组格式
             return [value]
 
@@ -123,26 +125,39 @@ class Dataset(Base):
     filename = Column(String(255), nullable=False)
     original_filename = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=False)
-    
+
     # 数据集信息
     row_count = Column(Integer, nullable=False)
     column_count = Column(Integer, nullable=False)
     columns = Column(JSON, nullable=False)  # 列名列表
-    
+
     # 元数据
     file_size = Column(Integer, nullable=False)  # 字节
     file_hash = Column(String(64), nullable=True)  # MD5 哈希
-    
+
     # 时间戳
     uploaded_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
     last_used_at = Column(DateTime, nullable=True)
-    
+
     # 描述和标签
     description = Column(Text, nullable=True)
     tags = Column(JSON, nullable=True)  # 标签列表
-    
+
     # 使用统计
     usage_count = Column(Integer, default=0)
+
+
+class TaskComparison(Base):
+    """任务对比记录表"""
+    __tablename__ = "task_comparisons"
+
+    id = Column(String(36), primary_key=True, index=True)
+    task_ids = Column(JSON, nullable=False)  # 对比的任务ID列表
+    target_columns = Column(JSON, nullable=False)  # 对比的目标列列表
+    tolerance = Column(Float, default=0.0)  # 容差值
+    comparison_results = Column(Text, nullable=False)  # 完整的对比结果（JSON字符串）
+    note = Column(String(200), nullable=True)  # 用户备注
+    created_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
 
 
 def init_db():

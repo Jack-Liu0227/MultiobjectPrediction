@@ -32,6 +32,7 @@ from api.tasks import router as tasks_router
 from api.dataset_split import router as dataset_split_router
 from api.llm_config import router as llm_config_router
 from api.prompt_templates import router as prompt_templates_router
+from api.task_comparison import router as task_comparison_router
 from routers.datasets import router as datasets_router
 
 # 注册路由
@@ -42,6 +43,7 @@ app.include_router(tasks_router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(dataset_split_router, prefix="/api/dataset-split", tags=["dataset-split"])
 app.include_router(llm_config_router, prefix="/api/llm", tags=["llm"])
 app.include_router(prompt_templates_router, prefix="/api/prompt-templates", tags=["prompt-templates"])
+app.include_router(task_comparison_router, prefix="/api/task-comparison", tags=["task-comparison"])
 app.include_router(datasets_router)
 
 
