@@ -17,6 +17,8 @@ from models.schemas import PredictionConfig, TaskStatus
 from services.task_manager import TaskManager
 from services.simple_rag_engine import SimpleRAGEngine
 from services.prompt_builder import PromptBuilder
+from services.prompt_template_manager import PromptTemplateManager
+from services.sample_text_builder import SampleTextBuilder
 from config import RESULTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -37,7 +39,29 @@ class RAGPredictionService:
         """
         self.task_manager = task_manager
         self.rag_engine = None
-        self.prompt_builder = PromptBuilder()
+
+    def _apply_column_name_mapping(self, text: str, column_name_mapping: Optional[Dict[str, str]] = None) -> str:
+        """
+        应用列名映射到文本中
+
+        Args:
+            text: 原始文本，例如 "Composition: ...\nProcessing_Description: ..."
+            column_name_mapping: 列名映射字典，例如 {"Processing_Description": "Heat treatment method"}
+
+        Returns:
+            映射后的文本，例如 "Composition: ...\nHeat treatment method: ..."
+        """
+        if not column_name_mapping:
+            # 使用默认映射
+            column_name_mapping = PromptTemplateManager.get_default_column_mapping()
+
+        result = text
+        for old_name, new_name in column_name_mapping.items():
+            # 替换 "old_name:" 为 "new_name:"
+            if f"{old_name}:" in result:
+                result = result.replace(f"{old_name}:", f"{new_name}:")
+
+        return result
 
     def _format_composition(self, row: pd.Series, composition_columns: list) -> tuple:
         """
@@ -416,7 +440,10 @@ class RAGPredictionService:
             composition_columns = config.composition_column
 
         # 验证必需的列存在
-        required_cols = composition_columns + [config.processing_column] + config.target_columns
+        required_cols = composition_columns + config.target_columns
+        # 工艺列是可选的，只有在提供时才验证
+        if config.processing_column:
+            required_cols.extend(config.processing_column)
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
             raise ValueError(f"缺少必需的列: {missing_cols}")
@@ -460,12 +487,45 @@ class RAGPredictionService:
         Returns:
             包含预测结果和详细信息的字典
         """
-        # 构建查询文本（格式化组分）
-        unit_type, test_composition_str = self._format_composition(test_row, composition_columns)
-        if unit_type:
-            query_text = f"Composition ({unit_type}): {test_composition_str}\nProcessing: {test_row[config.processing_column]}"
-        else:
-            query_text = f"Composition: {test_composition_str}\nProcessing: {test_row[config.processing_column]}"
+        # 导入 PromptBuilder 用于统一构建样本文本
+        from services.prompt_builder import PromptBuilder
+
+        # 格式化组分信息（如果有）
+        test_composition_str = None
+        if composition_columns:
+            unit_type, comp_str = self._format_composition(test_row, composition_columns)
+            if unit_type:
+                test_composition_str = f"({unit_type}) {comp_str}"
+            else:
+                test_composition_str = comp_str
+
+        # 使用统一的样本文本构建工具
+        from services.sample_text_builder import SampleTextBuilder
+
+        # 提取工艺列数据
+        processing_dict = {}
+        if config.processing_column:
+            for proc_col in config.processing_column:
+                if proc_col in test_row.index:
+                    processing_value = test_row[proc_col]
+                    if pd.notna(processing_value) and str(processing_value).strip():
+                        processing_dict[proc_col] = processing_value
+
+        # 提取特征列数据
+        feature_dict = {}
+        if config.feature_columns:
+            for feat_col in config.feature_columns:
+                if feat_col in test_row.index:
+                    feat_value = test_row[feat_col]
+                    if pd.notna(feat_value):
+                        feature_dict[feat_col] = feat_value
+
+        # 构建查询文本
+        query_text = SampleTextBuilder.build_sample_text(
+            composition=test_composition_str,
+            processing_columns=processing_dict if processing_dict else None,
+            feature_columns=feature_dict if feature_dict else None
+        )
 
         # 检索相似样本
         similar_indices = self.rag_engine.retrieve_similar_samples(
@@ -477,35 +537,125 @@ class RAGPredictionService:
         # 准备相似样本数据（包含所有目标列的值）
         similar_samples = []
         for sim_idx in similar_indices:
-            # 格式化相似样本的组分
-            _, sim_composition_str = self._format_composition(train_df.iloc[sim_idx], composition_columns)
-            sample_data = {
-                'composition': sim_composition_str,
-                'processing': train_df.iloc[sim_idx][config.processing_column],
-            }
+            sample_data = {}
+
+            # 格式化相似样本的组分（如果有）
+            sim_composition_str = None
+            if composition_columns:
+                _, sim_composition_str = self._format_composition(train_df.iloc[sim_idx], composition_columns)
+
+            # 收集工艺信息（如果有，支持多列）
+            processing_dict = {}
+            if config.processing_column:
+                for proc_col in config.processing_column:
+                    if proc_col in train_df.columns:
+                        proc_value = train_df.iloc[sim_idx][proc_col]
+                        if pd.notna(proc_value):
+                            processing_dict[proc_col] = proc_value
+
+            # 收集特征列信息（如果有，支持多列）
+            feature_dict = {}
+            if config.feature_columns:
+                for feat_col in config.feature_columns:
+                    if feat_col in train_df.columns:
+                        feat_value = train_df.iloc[sim_idx][feat_col]
+                        if pd.notna(feat_value):
+                            feature_dict[feat_col] = feat_value
+
+            # 使用 SampleTextBuilder 构建统一的样本文本
+            # 这确保了与提示词格式完全一致
+            sample_text = SampleTextBuilder.build_sample_text(
+                composition=sim_composition_str,
+                processing_columns=processing_dict if processing_dict else None,
+                feature_columns=feature_dict if feature_dict else None
+            )
+
+            # 应用列名映射（从自定义模板中获取，如果没有则使用默认值）
+            column_name_mapping = None
+            if config.prompt_template and "column_name_mapping" in config.prompt_template:
+                column_name_mapping = config.prompt_template["column_name_mapping"]
+            sample_text = self._apply_column_name_mapping(sample_text, column_name_mapping)
+
+            sample_data['sample_text'] = sample_text
+
             # 添加所有目标列的值
             for col in config.target_columns:
                 sample_data[col] = train_df.iloc[sim_idx][col]
+
             similar_samples.append(sample_data)
+
+        # 准备查询样本的组分（去除单位前缀，仅保留组分字符串）
+        query_composition = None
+        if composition_columns:
+            _, comp_str_only = self._format_composition(test_row, composition_columns)
+            query_composition = comp_str_only
+
+        # 准备工艺列字典（支持多列，使用原始列名）
+        query_processing = {}
+        if config.processing_column:
+            for proc_col in config.processing_column:
+                if proc_col in test_row.index:
+                    processing_value = test_row[proc_col]
+                    if pd.notna(processing_value) and str(processing_value).strip():
+                        query_processing[proc_col] = processing_value
+
+        # 准备特征列字典
+        query_features = {}
+        if config.feature_columns:
+            for feat_col in config.feature_columns:
+                if feat_col in test_row.index:
+                    feat_value = test_row[feat_col]
+                    if pd.notna(feat_value):
+                        query_features[feat_col] = feat_value
 
         # 使用 LLM 一次性生成所有目标的预测（获取详细信息）
         result = self.rag_engine.generate_multi_target_prediction(
-            query_composition=test_composition_str,
-            query_processing=test_row[config.processing_column],
+            query_composition=query_composition,
+            query_processing=query_processing,
             similar_samples=similar_samples,
             target_columns=config.target_columns,
             model_provider=config.model_provider,
             model_name=config.model_name,
             temperature=config.temperature,
             return_details=True,  # 获取详细信息
-            custom_template=config.prompt_template  # 传递自定义模板
+            custom_template=config.prompt_template,  # 传递自定义模板
+            query_features=query_features  # 传递特征列
         )
 
-        # 返回结果
+        # 返回结果（使用不带单位前缀的组分字符串）
+        # 处理工艺列（支持多列）
+        processing_dict = {}
+        if config.processing_column:
+            for proc_col in config.processing_column:
+                if proc_col in test_row.index:
+                    processing_dict[proc_col] = test_row[proc_col]
+
+        # 提取特征列数据
+        feature_dict = {}
+        if config.feature_columns:
+            for feat_col in config.feature_columns:
+                if feat_col in test_row.index:
+                    feat_value = test_row[feat_col]
+                    if pd.notna(feat_value):
+                        feature_dict[feat_col] = feat_value
+
+        # 构建统一的样本文本（与提示词格式完全一致）
+        # 这个文本将直接用于前端展示，避免重复的格式化逻辑
+        sample_text = SampleTextBuilder.build_sample_text(
+            composition=query_composition,
+            processing_columns=processing_dict if processing_dict else None,
+            feature_columns=feature_dict if feature_dict else None
+        )
+
+        # 应用列名映射（从自定义模板中获取，如果没有则使用默认值）
+        column_name_mapping = None
+        if config.prompt_template and "column_name_mapping" in config.prompt_template:
+            column_name_mapping = config.prompt_template["column_name_mapping"]
+        sample_text = self._apply_column_name_mapping(sample_text, column_name_mapping)
+
         result_dict = {
             'sample_index': int(test_idx),
-            'composition': test_composition_str,
-            'processing': test_row[config.processing_column],
+            'sample_text': sample_text,  # 统一的样本文本（已应用列名映射）
             'predictions': result['predictions'],
             'prompt': result.get('prompt', ''),
             'llm_response': result.get('llm_response', ''),
@@ -540,14 +690,47 @@ class RAGPredictionService:
         # 1. 创建训练样本的文本表示和嵌入
         logger.info(f"Task {task_id}: Creating embeddings for {len(train_df)} training samples")
 
+        # 导入 PromptBuilder 用于统一构建样本文本
+        from services.prompt_builder import PromptBuilder
+
         train_texts = []
         for _, row in train_df.iterrows():
-            # 格式化组分信息
-            unit_type, composition_str = self._format_composition(row, composition_columns)
-            if unit_type:
-                text = f"Composition ({unit_type}): {composition_str}\nProcessing: {row[config.processing_column]}"
-            else:
-                text = f"Composition: {composition_str}\nProcessing: {row[config.processing_column]}"
+            # 格式化组分信息（如果有）
+            composition_str = None
+            if composition_columns:
+                unit_type, comp_str = self._format_composition(row, composition_columns)
+                if unit_type:
+                    composition_str = f"({unit_type}) {comp_str}"
+                else:
+                    composition_str = comp_str
+
+            # 使用统一的样本文本构建工具
+            from services.sample_text_builder import SampleTextBuilder
+
+            # 提取工艺列数据
+            processing_dict = {}
+            if config.processing_column:
+                for proc_col in config.processing_column:
+                    if proc_col in row.index:
+                        processing_value = row[proc_col]
+                        if pd.notna(processing_value) and str(processing_value).strip():
+                            processing_dict[proc_col] = processing_value
+
+            # 提取特征列数据
+            feature_dict = {}
+            if config.feature_columns:
+                for feat_col in config.feature_columns:
+                    if feat_col in row.index:
+                        feat_value = row[feat_col]
+                        if pd.notna(feat_value):
+                            feature_dict[feat_col] = feat_value
+
+            # 构建样本文本
+            text = SampleTextBuilder.build_sample_text(
+                composition=composition_str,
+                processing_columns=processing_dict if processing_dict else None,
+                feature_columns=feature_dict if feature_dict else None
+            )
             train_texts.append(text)
 
         # 创建嵌入
@@ -718,20 +901,37 @@ class RAGPredictionService:
             result = results_dict[test_idx]
             test_row = sampled_test_df.loc[test_idx]
 
-            # 提取预测值
+            # 提取预测值（确保使用默认值 0.0 而不是 None）
+            used_default_values = []
             for target_col in config.target_columns:
-                predictions[target_col].append(result['predictions'].get(target_col))
+                pred_value = result['predictions'].get(target_col)
+                # 如果预测值为 None，使用默认值 0.0
+                if pred_value is None:
+                    logger.warning(
+                        f"Task {task_id}: Sample {result['sample_index']} - "
+                        f"目标属性 {target_col} 的预测值为 None，使用默认值 0.0"
+                    )
+                    pred_value = 0.0
+                    used_default_values.append(target_col)
+                # 检查是否为解析失败的默认值（LLM 响应中包含错误信息或响应被截断）
+                elif pred_value == 0.0 and (
+                    'Error:' in result.get('llm_response', '') or
+                    len(result.get('llm_response', '')) < 100
+                ):
+                    used_default_values.append(target_col)
+                predictions[target_col].append(pred_value)
 
             # 保存详细信息
+            # 使用统一的 sample_text 字段（与提示词格式完全一致）
             sample_detail = {
                 'sample_index': result['sample_index'],
-                'composition': result['composition'],
-                'processing': result['processing'],
+                'sample_text': result['sample_text'],  # 统一的样本文本
                 'true_values': {col: float(test_row[col]) for col in config.target_columns},
                 'predicted_values': result['predictions'],
                 'prompt': result['prompt'],
                 'llm_response': result['llm_response'],
-                'similar_samples': result['similar_samples']
+                'similar_samples': result['similar_samples'],
+                'used_default_values': used_default_values  # 记录使用默认值的目标属性
             }
 
             # 添加 ID 字段（如果存在）
@@ -767,7 +967,7 @@ class RAGPredictionService:
         task_results_dir: Path,
         existing_predictions: Optional[pd.DataFrame] = None,
         composition_columns: Optional[list] = None,
-        processing_column: Optional[str] = None,
+        processing_column: Optional[list] = None,
     ) -> str:
         """
         保存预测结果（支持与已有结果合并）
@@ -894,6 +1094,7 @@ class RAGPredictionService:
         """计算预测指标"""
         from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
         import numpy as np
+        import math
 
         metrics = {}
 
@@ -912,16 +1113,35 @@ class RAGPredictionService:
                 continue
 
             # 计算指标
-            r2 = r2_score(y_true, y_pred)
+            # 注意：当样本数量 < 2 时，r2_score 会返回 NaN
+            if len(y_true) >= 2:
+                r2 = r2_score(y_true, y_pred)
+            else:
+                r2 = None  # 样本数量不足，无法计算 R²
+
             rmse = np.sqrt(mean_squared_error(y_true, y_pred))
             mae = mean_absolute_error(y_true, y_pred)
-            mape = np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+
+            # 计算 MAPE，避免除以零
+            with np.errstate(divide='ignore', invalid='ignore'):
+                mape = np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+
+            # 将 NaN 和 Inf 值转换为 None，确保 JSON 序列化兼容
+            def safe_float(value):
+                """将浮点数转换为 JSON 兼容的值"""
+                if value is None:
+                    return None
+                if isinstance(value, (int, float)):
+                    if math.isnan(value) or math.isinf(value):
+                        return None
+                    return float(value)
+                return value
 
             metrics[target_col] = {
-                "r2": float(r2),
-                "rmse": float(rmse),
-                "mae": float(mae),
-                "mape": float(mape)
+                "r2": safe_float(r2),
+                "rmse": safe_float(rmse),
+                "mae": safe_float(mae),
+                "mape": safe_float(mape)
             }
 
         return metrics
@@ -955,14 +1175,14 @@ class RAGPredictionService:
         target_columns: List[str]
     ) -> set:
         """
-        识别预测结果中值为零的样本索引
+        识别预测结果中值为零或 NaN 的样本索引
 
         Args:
             predictions_df: 预测结果 DataFrame（必须包含 sample_index 列）
             target_columns: 目标属性列名列表
 
         Returns:
-            包含零值的样本索引集合
+            包含零值或 NaN 值的样本索引集合
         """
         zero_value_indices = set()
 
@@ -978,7 +1198,7 @@ class RAGPredictionService:
                 continue
 
             sample_index = int(sample_index)
-            has_zero_value = False
+            has_invalid_value = False
 
             # 检查所有目标列的预测值
             for target_col in target_columns:
@@ -990,17 +1210,16 @@ class RAGPredictionService:
 
                 pred_value = row[pred_col]
 
-                # 检查是否为零值（包括 0, 0.0, NaN, None）
-                # 注意：这里只检查严格的零值，不包括 NaN 和 None
-                # 如果需要也重新预测 NaN 和 None，可以取消下面的注释
-                if pd.notna(pred_value) and pred_value == 0:
-                    has_zero_value = True
+                # 检查是否为无效值（包括 0, 0.0, NaN, None）
+                # NaN 值和零值都视为无效预测，需要重新预测
+                if pd.isna(pred_value) or pred_value == 0:
+                    has_invalid_value = True
                     logger.debug(
-                        f"样本 {sample_index} 的 {target_col} 预测值为零: {pred_value}"
+                        f"样本 {sample_index} 的 {target_col} 预测值无效: {pred_value} (NaN={pd.isna(pred_value)}, Zero={pred_value == 0 if pd.notna(pred_value) else False})"
                     )
                     break
 
-            if has_zero_value:
+            if has_invalid_value:
                 zero_value_indices.add(sample_index)
 
         return zero_value_indices
@@ -1010,8 +1229,9 @@ class RAGPredictionService:
         test_df: pd.DataFrame,
         existing_predictions: pd.DataFrame,
         composition_columns: list,
-        processing_column: str,
-        target_columns: list = None
+        processing_column: list,
+        target_columns: list = None,
+        prev_task_id: str = None
     ) -> pd.DataFrame:
         """
         过滤掉已完成预测的样本（仅保留空值或0值的样本需要重新预测）
@@ -1020,8 +1240,9 @@ class RAGPredictionService:
             test_df: 测试集 DataFrame
             existing_predictions: 已有预测结果 DataFrame
             composition_columns: 组分列名列表
-            processing_column: 工艺列名
+            processing_column: 工艺列名列表（支持多选）
             target_columns: 目标列名列表（用于检查预测值是否有效）
+            prev_task_id: 上一个任务的 ID（用于加载 process_details.json）
 
         Returns:
             过滤后的测试集（仅包含未完成或预测值无效的样本）
@@ -1032,8 +1253,14 @@ class RAGPredictionService:
             for col in composition_columns:
                 if col in row.index and pd.notna(row[col]):
                     comp_parts.append(f"{col}:{row[col]}")
-            processing = row.get(processing_column, "")
-            return "|".join(comp_parts) + "|" + str(processing)
+            # 处理工艺列（支持多列）
+            processing_parts = []
+            if processing_column:
+                for proc_col in processing_column:
+                    if proc_col in row.index and pd.notna(row[proc_col]):
+                        processing_parts.append(f"{proc_col}:{row[proc_col]}")
+            processing_str = "|".join(processing_parts) if processing_parts else ""
+            return "|".join(comp_parts) + "|" + processing_str
 
         # 为测试集和已有预测创建键
         test_df = test_df.copy()
@@ -1042,28 +1269,53 @@ class RAGPredictionService:
         existing_predictions = existing_predictions.copy()
         existing_predictions['_sample_key'] = existing_predictions.apply(create_sample_key, axis=1)
 
-        # 找出需要重新预测的样本键（预测值为空或0的样本）
+        # 找出需要重新预测的样本键（预测值为空、NaN 或使用了默认值的样本）
         incomplete_keys = set()
+
+        # 尝试从 process_details.json 中加载使用默认值的样本信息
+        samples_with_defaults = set()
+        if prev_task_id:
+            try:
+                prev_task_dir = Path(self.results_dir) / prev_task_id
+                process_details_file = prev_task_dir / "process_details.json"
+                if process_details_file.exists():
+                    import json
+                    with open(process_details_file, 'r', encoding='utf-8') as f:
+                        process_details = json.load(f)
+                        for detail in process_details:
+                            if detail.get('used_default_values'):
+                                # 记录使用了默认值的样本索引
+                                samples_with_defaults.add(detail['sample_index'])
+                    logger.info(f"从 {prev_task_id} 加载了 {len(samples_with_defaults)} 个使用默认值的样本")
+            except Exception as e:
+                logger.warning(f"无法加载 process_details.json: {e}")
 
         if target_columns:
             # 检查每个样本的预测值
             for _, row in existing_predictions.iterrows():
                 sample_key = row['_sample_key']
+                sample_idx = row.get('sample_index')
                 needs_reprediction = False
 
-                # 检查所有目标列的预测值
-                for target_col in target_columns:
-                    pred_col = f"{target_col}_predicted"
-                    if pred_col in row.index:
-                        pred_value = row[pred_col]
-                        # 如果预测值为空、NaN或0，则需要重新预测
-                        if pd.isna(pred_value) or pred_value == 0 or pred_value is None:
+                # 如果样本使用了默认值，需要重新预测
+                if sample_idx in samples_with_defaults:
+                    needs_reprediction = True
+                    logger.info(f"样本 {sample_idx} 在上次预测中使用了默认值，将重新预测")
+                else:
+                    # 检查所有目标列的预测值
+                    for target_col in target_columns:
+                        pred_col = f"{target_col}_predicted"
+                        if pred_col in row.index:
+                            pred_value = row[pred_col]
+                            # 如果预测值为空或 NaN，则需要重新预测
+                            # 注意：不再将 0 视为无效值，因为 0 可能是真实的预测结果
+                            if pd.isna(pred_value) or pred_value is None:
+                                needs_reprediction = True
+                                break
+                        else:
+                            # 如果预测列不存在，也需要重新预测
                             needs_reprediction = True
                             break
-                    else:
-                        # 如果预测列不存在，也需要重新预测
-                        needs_reprediction = True
-                        break
 
                 if needs_reprediction:
                     incomplete_keys.add(sample_key)

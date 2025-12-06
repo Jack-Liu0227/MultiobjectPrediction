@@ -14,7 +14,7 @@ interface ColumnSelectorProps {
 
 export interface ColumnConfig {
   compositionColumn: string;
-  processingColumn: string;
+  processingColumn: string[];  // 工艺列改为多选，支持空数组
   targetColumns: string[];
   maxRetrievedSamples: number;
 }
@@ -28,8 +28,8 @@ export default function ColumnSelector({
   const [compositionColumn, setCompositionColumn] = useState<string>(
     initialConfig?.compositionColumn || ''
   );
-  const [processingColumn, setProcessingColumn] = useState<string>(
-    initialConfig?.processingColumn || ''
+  const [processingColumn, setProcessingColumn] = useState<string[]>(
+    initialConfig?.processingColumn || []
   );
   const [targetColumns, setTargetColumns] = useState<string[]>(
     initialConfig?.targetColumns || []
@@ -158,14 +158,15 @@ export default function ColumnSelector({
       }
     }
 
-    // 自动检测工艺描述列
-    if (!processingColumn) {
+    // 自动检测工艺描述列（可选）
+    if (processingColumn.length === 0) {
       const detected = detectProcessingColumn(columns);
       if (detected) {
-        setProcessingColumn(detected);
+        setProcessingColumn([detected]);
         console.log('✓ 自动识别工艺描述列:', detected);
       } else {
-        newWarnings.push('未能自动识别工艺描述列，请手动选择 Processing_Description 或相关列');
+        console.log('ℹ️ 未能自动识别工艺描述列（可选），如需要请手动选择');
+        // 不再将此作为警告，因为工艺列是可选的
       }
     }
 
@@ -188,12 +189,12 @@ export default function ColumnSelector({
     }
   }, [columns]); // 只依赖 columns，确保只在列数据变化时运行
 
-  // 更新配置
+  // 更新配置（工艺列现在是可选的，不再要求必须选择）
   useEffect(() => {
-    if (compositionColumn && processingColumn && targetColumns.length >= 2) {
+    if (compositionColumn && targetColumns.length >= 2) {
       onConfigChange({
         compositionColumn,
-        processingColumn,
+        processingColumn,  // 直接传递数组（可以为空数组）
         targetColumns,
         maxRetrievedSamples,
       });
@@ -215,7 +216,7 @@ export default function ColumnSelector({
   // 过滤出可能的目标列（数值型列）
   const potentialTargetColumns = columns.filter((col) => {
     // 排除已选择的组成列和工艺列
-    if (col === compositionColumn || col === processingColumn) {
+    if (col === compositionColumn || processingColumn.includes(col)) {
       return false;
     }
 
@@ -238,8 +239,9 @@ export default function ColumnSelector({
            (col.includes('(') && col.includes(')'));
   });
 
+  // 工艺列现在是可选的，所以验证逻辑中不再要求 processingColumn
   const isValid =
-    compositionColumn && processingColumn && targetColumns.length >= 2;
+    compositionColumn && targetColumns.length >= 2;
 
   return (
     <div className="space-y-6">
@@ -290,23 +292,61 @@ export default function ColumnSelector({
         </select>
       </div>
 
-      {/* 热处理列选择 */}
+      {/* 热处理列选择（可选，支持多选） */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          热处理描述列 <span className="text-red-500">*</span>
+          工艺描述列 <span className="text-gray-500 text-xs ml-2">（可选，支持多选）</span>
+          {processingColumn.length > 0 && (
+            <span className="text-gray-500 text-xs ml-2">
+              (已选择 {processingColumn.length} 个)
+            </span>
+          )}
         </label>
-        <select
-          value={processingColumn}
-          onChange={(e) => setProcessingColumn(e.target.value)}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-        >
-          <option value="">-- 请选择 --</option>
-          {columns.map((col) => (
-            <option key={col} value={col}>
-              {col}
-            </option>
-          ))}
-        </select>
+        <div className="border border-gray-300 rounded-lg p-3 max-h-48 overflow-y-auto">
+          {columns.filter(col => col !== compositionColumn && !targetColumns.includes(col)).length === 0 ? (
+            <p className="text-gray-500 text-sm">
+              没有可选的工艺列
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {columns
+                .filter(col => col !== compositionColumn && !targetColumns.includes(col))
+                .map((col) => (
+                  <label
+                    key={col}
+                    className="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 p-2 rounded"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={processingColumn.includes(col)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setProcessingColumn([...processingColumn, col]);
+                        } else {
+                          setProcessingColumn(processingColumn.filter(c => c !== col));
+                        }
+                      }}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-700">{col}</span>
+                  </label>
+                ))}
+            </div>
+          )}
+        </div>
+        {processingColumn.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setProcessingColumn([])}
+            className="mt-2 px-3 py-1 text-sm text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg border border-red-300"
+            title="清空所有工艺列选择"
+          >
+            清空所有
+          </button>
+        )}
+        <p className="text-xs text-gray-500 mt-2">
+          如果数据集中没有工艺描述列，可以不选择。提示词中将不包含工艺相关内容。
+        </p>
       </div>
 
       {/* 目标列多选 */}

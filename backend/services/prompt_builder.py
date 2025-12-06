@@ -11,14 +11,22 @@ from textwrap import dedent
 class PromptBuilder:
     """RAG 提示词构建器"""
 
-    def __init__(self, custom_template: Optional[Dict] = None):
+    def __init__(self, custom_template: Optional[Dict] = None, column_name_mapping: Optional[Dict[str, str]] = None, apply_mapping_to_target: bool = True):
         """
         初始化提示词构建器
 
         Args:
             custom_template: 自定义模板数据（可选）
+            column_name_mapping: 列名映射字典（可选），例如 {"Processing": "Heat treatment method"}
+            apply_mapping_to_target: 是否对 Target Material 部分应用列名映射（默认为 True）
         """
         self.custom_template = custom_template
+        # 默认列名映射
+        self.column_name_mapping = column_name_mapping or {
+            "Processing": "Heat treatment method",
+            "Composition": "Alloy Composition"
+        }
+        self.apply_mapping_to_target = apply_mapping_to_target
 
     # 属性单位映射
     PROPERTY_UNITS = {
@@ -75,18 +83,53 @@ class PromptBuilder:
         }}
     """).strip()
     
+    @staticmethod
+    def build_sample_text(
+        composition: Optional[str] = None,
+        processing: Optional[str] = None,
+        features: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        构建样本文本表示（用于嵌入和检索）
+
+        Args:
+            composition: 组分字符串（可选）
+            processing: 工艺字符串（可选）
+            features: 特征字典（可选），例如 {"Temperature": 298, "Pressure": 1.0}
+
+        Returns:
+            格式化的样本文本，例如：
+            "Composition: Al 5.3, Co 21\nProcessing: Cold rolling\nTemperature: 298"
+        """
+        text_parts = []
+
+        # 添加组分（如果有）
+        if composition and str(composition).strip():
+            text_parts.append(f"Composition: {composition}")
+
+        # 添加工艺（如果有）
+        if processing and str(processing).strip():
+            text_parts.append(f"Processing: {processing}")
+
+        # 添加特征列（如果有）
+        if features:
+            for feat_name, feat_value in features.items():
+                text_parts.append(f"{feat_name}: {feat_value}")
+
+        return "\n".join(text_parts)
+
     def get_property_unit(self, target_property: str) -> str:
         """获取属性单位"""
         # 精确匹配
         if target_property in self.PROPERTY_UNITS:
             return self.PROPERTY_UNITS[target_property]
-        
+
         # 从括号中提取单位
         if '(' in target_property and target_property.endswith(')'):
             start = target_property.rfind('(')
             unit = target_property[start + 1:-1].strip()
             return unit
-        
+
         # 模糊匹配
         target_lower = target_property.lower()
         if 'uts' in target_lower or 'tensile' in target_lower:
@@ -101,8 +144,49 @@ class PromptBuilder:
             return "g/cm³"
         elif 'modulus' in target_lower:
             return "GPa"
-        
+
         return ""
+
+    def _apply_column_name_mapping(self, text: str) -> str:
+        """
+        应用列名映射到文本中
+
+        注意：从 2025-12-05 开始，样本文本在构建时就使用映射后的标签（在 simple_rag_engine.py 和 prompt_templates.py 中）。
+        此方法主要用于向后兼容和双重保险，确保即使样本文本中仍有未映射的标签，也能被正确替换。
+
+        Args:
+            text: 原始文本，例如 "Composition: ...\nProcessing: ..."
+
+        Returns:
+            映射后的文本，例如 "Composition: ...\nHeat treatment method: ..."
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # 调试日志
+        logger.debug(f"=== 列名映射调试 ===")
+        logger.debug(f"映射配置: {self.column_name_mapping}")
+        logger.debug(f"映射前文本（前200字符）: {text[:200]}")
+
+        result = text
+        applied_mappings = []
+        for old_name, new_name in self.column_name_mapping.items():
+            # 替换 "old_name:" 为 "new_name:"
+            if f"{old_name}:" in result:
+                result = result.replace(f"{old_name}:", f"{new_name}:")
+                applied_mappings.append(f"{old_name} → {new_name}")
+                logger.debug(f"✓ 应用映射: {old_name}: → {new_name}:")
+            else:
+                logger.debug(f"✗ 未找到匹配: {old_name}:")
+
+        if applied_mappings:
+            logger.info(f"列名映射已应用: {', '.join(applied_mappings)}")
+        else:
+            logger.warning(f"未应用任何列名映射（可能文本中没有匹配的列名）")
+
+        logger.debug(f"映射后文本（前200字符）: {result[:200]}")
+
+        return result
     
     def build_prompt(
         self,
@@ -141,6 +225,9 @@ class PromptBuilder:
                 unit = self.get_property_unit(target_properties[0])
                 return self._build_zero_shot_prompt(test_sample, target_properties[0], unit, None)
 
+        # 应用列名映射到测试样本（根据 apply_mapping_to_target 选项）
+        mapped_test_sample = self._apply_column_name_mapping(test_sample) if self.apply_mapping_to_target else test_sample
+
         # 多目标预测
         if is_multi_target:
             reference_section = self._build_multi_target_reference_section(
@@ -153,7 +240,7 @@ class PromptBuilder:
             return self.MULTI_TARGET_PROTOCOL.format(
                 target_properties_list=target_properties_list,
                 reference_section=reference_section,
-                test_sample=test_sample,
+                test_sample=mapped_test_sample,
                 predictions_json_template=predictions_json_template
             )
 
@@ -176,7 +263,7 @@ class PromptBuilder:
                 {reference_section}
 
                 **Target Material**:
-                {test_sample}
+                {mapped_test_sample}
 
                 **Required Analysis Protocol**:
 
@@ -227,9 +314,12 @@ class PromptBuilder:
                 target_properties[0]
             )
 
+        # 应用列名映射到测试样本（根据 apply_mapping_to_target 选项）
+        mapped_test_sample = self._apply_column_name_mapping(test_sample) if self.apply_mapping_to_target else test_sample
+
         # 准备模板变量
         template_vars = {
-            "test_sample": test_sample,
+            "test_sample": mapped_test_sample,
             "reference_samples": reference_samples,
             "target_properties_list": ", ".join(target_properties),
             "num_targets": len(target_properties),
@@ -387,6 +477,7 @@ class PromptBuilder:
 
         注意：此方法只返回样本列表，不包含标题和说明文字。
         标题和说明文字由模板或 reference_format 控制。
+        此方法会应用列名映射，确保预览和实际预测都能正确显示映射后的列名。
         """
         if not retrieved_samples:
             return "No similar training examples found in the database."
@@ -394,7 +485,9 @@ class PromptBuilder:
         reference_lines = []
 
         for sample_text, _, _ in retrieved_samples:
-            reference_lines.extend([sample_text, ""])
+            # 应用列名映射到每个参考样本
+            mapped_sample_text = self._apply_column_name_mapping(sample_text)
+            reference_lines.extend([mapped_sample_text, ""])
 
         return "\n".join(reference_lines)
 
@@ -408,6 +501,7 @@ class PromptBuilder:
 
         注意：此方法只返回样本列表，不包含标题和说明文字。
         标题和说明文字由 reference_format 模板控制。
+        此方法会应用列名映射，确保预览和实际预测都能正确显示映射后的列名。
         """
         if not retrieved_samples:
             return "No similar training examples found in the database."
@@ -415,14 +509,16 @@ class PromptBuilder:
         reference_lines = []
 
         for i, (sample_text, _, metadata) in enumerate(retrieved_samples, 1):
-            # 提取组成和处理信息
-            for line in sample_text.split('\n'):
-                if 'Composition:' in line:
-                    reference_lines.append(line)
-                elif 'Processing:' in line:
-                    # 提取 Processing: 后面的内容
-                    processing_content = line.split('Processing:', 1)[1].strip()
-                    reference_lines.append(f"Heat treatment method: {processing_content}")
+            # 应用列名映射到样本文本
+            mapped_sample_text = self._apply_column_name_mapping(sample_text)
+
+            # 提取组成和处理信息（使用映射后的文本）
+            for line in mapped_sample_text.split('\n'):
+                # 跳过空行
+                if not line.strip():
+                    continue
+                # 添加所有非空行（已经应用了列名映射）
+                reference_lines.append(line)
 
             # 添加所有目标属性的值
             reference_lines.append("Properties:")
@@ -466,6 +562,9 @@ class PromptBuilder:
         initial_guess: Optional[float] = None
     ) -> str:
         """构建零样本提示词"""
+        # 应用列名映射（根据 apply_mapping_to_target 选项）
+        mapped_test_sample = self._apply_column_name_mapping(test_sample) if self.apply_mapping_to_target else test_sample
+
         initial_guess_section = self._build_initial_guess_section(initial_guess, unit)
 
         if initial_guess is not None:
@@ -512,7 +611,7 @@ class PromptBuilder:
 
         return zero_shot_template.format(
             target_property=target_property,
-            test_sample=test_sample,
+            test_sample=mapped_test_sample,
             initial_guess_section=initial_guess_section,
             plausibility_section=plausibility_section,
             unit=unit
@@ -524,6 +623,9 @@ class PromptBuilder:
         target_properties: List[str]
     ) -> str:
         """构建零样本多目标提示词（与主模板保持一致）"""
+        # 应用列名映射（根据 apply_mapping_to_target 选项）
+        mapped_test_sample = self._apply_column_name_mapping(test_sample) if self.apply_mapping_to_target else test_sample
+
         target_properties_list = ", ".join(target_properties)
         predictions_json_template = self._build_predictions_json_template(target_properties)
 
@@ -535,7 +637,7 @@ class PromptBuilder:
             **Reference Samples**: No similar training examples found in the database.
 
             **Target Material**:
-            {test_sample}
+            {mapped_test_sample}
 
             **Required Analysis Protocol**:
 

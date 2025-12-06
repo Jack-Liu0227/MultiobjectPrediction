@@ -44,6 +44,10 @@ def format_composition(sample: Dict, columns: List[str]) -> str:
         if value is None:
             continue
 
+        # 跳过零值元素
+        if value == 0 or value == 0.0:
+            continue
+
         # 提取元素名称，去掉单位后缀
         element = col
         if "(" in element:

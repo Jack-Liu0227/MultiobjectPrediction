@@ -34,6 +34,12 @@ class PromptTemplateManager:
     
     def _ensure_default_templates(self):
         """确保默认模板存在"""
+        # 默认列名映射
+        default_column_mapping = {
+            "Processing": "Heat treatment method",
+            "Composition": "Alloy Composition"
+        }
+
         default_single_target = {
             "template_name": "默认单目标模板",
             "template_type": "single_target",
@@ -65,6 +71,7 @@ class PromptTemplateManager:
 3. **Final Prediction**:
    - Provide a single numerical value.
    - Include confidence level and brief reasoning.""",
+            "column_name_mapping": default_column_mapping,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat()
         }
@@ -101,6 +108,7 @@ class PromptTemplateManager:
 3. **Final Predictions**:
    - Provide numerical values for all target properties.
    - Include confidence level and brief reasoning.""",
+            "column_name_mapping": default_column_mapping,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat()
         }
@@ -182,11 +190,33 @@ class PromptTemplateManager:
             with open(template_path, 'r', encoding='utf-8') as f:
                 template_data = json.load(f)
 
+            # 向后兼容：如果模板没有 column_name_mapping，使用默认值
+            if "column_name_mapping" not in template_data:
+                template_data["column_name_mapping"] = self.get_default_column_mapping()
+
             logger.info(f"Template loaded: {template_id}")
             return template_data
         except Exception as e:
             logger.error(f"Failed to load template {template_id}: {e}", exc_info=True)
             return None
+
+    @staticmethod
+    def get_default_column_mapping() -> Dict[str, str]:
+        """
+        获取默认的列名映射
+
+        注意：
+        - "Processing" 和 "Processing_Description" 是工艺列的映射
+        - 其他列（特征列、目标属性列）需要单独映射
+        - "Composition" 不需要映射,因为它已经是显示名称
+
+        Returns:
+            默认列名映射字典
+        """
+        return {
+            "Processing": "Heat treatment method",
+            "Processing_Description": "Heat treatment method"
+        }
 
     def list_templates(self) -> List[Dict]:
         """

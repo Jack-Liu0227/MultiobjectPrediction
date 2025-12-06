@@ -81,7 +81,7 @@ class Task(Base):
 
     # 配置信息（使用 FlexibleJSON 处理旧数据）
     composition_column = Column(FlexibleJSON, nullable=True)  # 存储为 JSON 数组（支持多个元素列）
-    processing_column = Column(String(100), nullable=True)
+    processing_column = Column(FlexibleJSON, nullable=True)  # 存储为 JSON 数组（支持多个工艺列）
     target_columns = Column(FlexibleJSON, nullable=True)  # 存储为 JSON 数组
     
     # LLM 配置

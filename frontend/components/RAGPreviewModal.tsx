@@ -11,7 +11,7 @@ interface RAGPreviewModalProps {
   datasetId?: string;
   fileId?: string;
   compositionColumns: string[];  // 改为数组
-  processingColumn: string;
+  processingColumn: string[];  // 改为数组，支持多选
   targetColumns: string[];
   trainRatio: number;
   randomSeed?: number;  // 新增：随机种子

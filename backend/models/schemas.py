@@ -27,18 +27,19 @@ class UploadResponse(BaseModel):
 
 class PredictionConfig(BaseModel):
     """预测配置"""
-    composition_column: Union[str, List[str]] = Field(..., description="元素组成列名（单列或多列列表）")
-    processing_column: str = Field(..., description="工艺描述列名")
+    composition_column: Optional[Union[str, List[str]]] = Field(default=None, description="元素组成列名（单列或多列列表，可选）")
+    processing_column: Optional[List[str]] = Field(default=None, description="工艺描述列名列表（可选，支持多选）")
     target_columns: List[str] = Field(..., min_items=1, max_items=5, description="目标性质列名列表（支持单目标）")
+    feature_columns: Optional[List[str]] = Field(default=None, description="特征列名列表（可选，用于RAG检索时的特征匹配）")
     train_ratio: float = Field(default=0.8, ge=0.5, le=0.9, description="训练集比例")
     random_seed: int = Field(default=42, ge=1, le=9999, description="随机种子")
-    max_retrieved_samples: int = Field(default=20, ge=5, description="RAG检索样本数（移除上限限制）")
+    max_retrieved_samples: int = Field(default=20, ge=0, description="RAG检索样本数（0表示零样本模式，无上限限制）")
     similarity_threshold: float = Field(default=0.3, ge=0.0, le=1.0, description="相似度阈值")
     model_provider: str = Field(default="openai", description="LLM提供商（固定使用 openai 兼容接口）")
     model_name: str = Field(default="openai/deepseek-chat", description="LLM模型名称（固定使用 DeepSeek）")
     temperature: float = Field(default=0.0, ge=0.0, le=2.0, description="LLM温度参数（默认0表示确定性输出）")
-    sample_size: int = Field(default=10, ge=1, le=100, description="从测试集随机抽取的样本数量")
-    workers: int = Field(default=5, ge=1, le=20, description="并行预测的工作线程数")
+    sample_size: int = Field(default=10, ge=1, description="从测试集随机抽取的样本数量（无上限限制）")
+    workers: int = Field(default=5, ge=1, description="并行预测的工作线程数（无上限限制）")
     prompt_template: Optional[Dict[str, Any]] = Field(default=None, description="自定义提示词模板（可选）")
     continue_from_task_id: Optional[str] = Field(default=None, description="继续未完成任务的 task_id（增量预测）")
     force_restart: bool = Field(default=False, description="强制重新开始预测，忽略之前的结果")
@@ -82,10 +83,10 @@ class TaskStatusResponse(BaseModel):
 
 class PredictionMetrics(BaseModel):
     """预测指标"""
-    r2: float
-    rmse: float
-    mae: float
-    mape: float
+    r2: Optional[float] = None  # 当样本数量 < 2 时，R² 无法计算
+    rmse: Optional[float] = None
+    mae: Optional[float] = None
+    mape: Optional[float] = None
 
 
 class ResultsResponse(BaseModel):
@@ -103,7 +104,7 @@ class TaskInfo(BaseModel):
     status: str  # pending, running, completed, failed
     filename: str
     composition_column: Optional[Union[str, List[str]]] = None  # 支持单列或多列
-    processing_column: Optional[str] = None
+    processing_column: Optional[List[str]] = None  # 支持多选
     target_columns: List[str]
     created_at: str
     started_at: Optional[str] = None
@@ -145,8 +146,9 @@ class RAGPreviewRequest(BaseModel):
     file_id: Optional[str] = None  # 直接上传文件时使用
     dataset_id: Optional[str] = None  # 引用已有数据集时使用
     composition_column: Union[str, List[str]] = Field(..., description="元素组成列名（单列或多列列表）")
-    processing_column: str = Field(..., description="工艺描述列名")
+    processing_column: Optional[List[str]] = Field(default=None, description="工艺描述列名列表（可选，支持多选）")
     target_columns: List[str] = Field(..., min_items=1, description="目标性质列名列表")
+    feature_columns: Optional[List[str]] = Field(default=None, description="特征列名列表（可选）")
     train_ratio: float = Field(default=0.8, ge=0.5, le=0.9, description="训练集比例")
     random_seed: int = Field(default=42, description="随机种子")
     max_retrieved_samples: int = Field(default=10, ge=1, le=50, description="RAG检索样本数")

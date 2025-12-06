@@ -17,6 +17,8 @@ interface PromptTemplate {
   reference_format: string;
   analysis_protocol: string;
   predictions_json_template?: string;
+  column_name_mapping?: Record<string, string>;  // 列名映射配置
+  apply_mapping_to_target?: boolean;  // 是否对 Target Material 应用列名映射
   created_at?: string;  // ISO 8601 格式时间戳
   updated_at?: string;  // ISO 8601 格式时间戳
 }
@@ -39,8 +41,13 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
     reference_format: '{reference_samples}',
     analysis_protocol: '',
     predictions_json_template: '',
+    column_name_mapping: {
+      'Processing': 'Heat treatment method',
+      'Composition': 'Composition'
+    },
+    apply_mapping_to_target: true,
   });
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(true);  // 默认展开编辑状态
   const [showPreview, setShowPreview] = useState(false);
   const [previewContent, setPreviewContent] = useState<string>('');
 
@@ -50,6 +57,76 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
   const [selectedDataset, setSelectedDataset] = useState<any>(null);
   const [testSampleIndex, setTestSampleIndex] = useState<number>(0);
   const [useRealData, setUseRealData] = useState<boolean>(false);
+
+  // 新增：特征列选择状态
+  const [selectedFeatureColumns, setSelectedFeatureColumns] = useState<string[]>([]);
+
+  // 新增：列选择状态追踪（用于列名映射自动提取）
+  const [compositionColumns, setCompositionColumns] = useState<string[]>([]);
+  const [processingColumn, setProcessingColumn] = useState<string[]>([]);
+  const [targetColumns, setTargetColumns] = useState<string[]>([]);
+
+  // 自动更新列名映射配置（当用户选择列时）
+  useEffect(() => {
+    if (!selectedDataset) return;
+
+    // 初始化映射对象（保留用户已有的自定义映射）
+    const newMapping: Record<string, string> = { ...currentTemplate.column_name_mapping };
+
+    // 1. 自动检测并设置元素列
+    const detectedCompCols = selectedDataset.columns.filter((col: string) =>
+      col.includes('at%') || col.includes('wt%')
+    );
+    if (detectedCompCols.length > 0) {
+      setCompositionColumns(detectedCompCols);
+      // 元素列汇总为一个 "Composition" 键
+      if (!newMapping['Composition']) {
+        newMapping['Composition'] = 'Composition';
+      }
+    }
+
+    // 2. 自动检测并设置工艺列
+    const detectedProcCols = selectedDataset.columns.filter((col: string) =>
+      col.toLowerCase().includes('processing') || col.toLowerCase().includes('treatment')
+    );
+    if (detectedProcCols.length > 0) {
+      setProcessingColumn(detectedProcCols);
+      // 工艺列标准化为 "Processing" 键（不使用原始列名如 Processing_Description）
+      // 如果用户已自定义该值，保留；否则使用默认值 "Heat treatment method"
+      if (!newMapping['Processing']) {
+        newMapping['Processing'] = 'Heat treatment method';
+      }
+    }
+
+    // 3. 自动检测目标属性列（根据模板类型）
+    const detectedTargetCols = currentTemplate.template_type === 'single_target'
+      ? ['UTS(MPa)']
+      : ['UTS(MPa)', 'El(%)'];
+    setTargetColumns(detectedTargetCols);
+    // 为每个目标属性添加映射（默认映射为自己）
+    detectedTargetCols.forEach(col => {
+      if (!newMapping[col]) {
+        newMapping[col] = col;
+      }
+    });
+
+    // 4. 添加特征列映射（每个特征列使用原始列名）
+    selectedFeatureColumns.forEach(col => {
+      if (!newMapping[col]) {
+        newMapping[col] = col;
+      }
+    });
+
+    // 只有当映射配置发生变化时才更新
+    const currentMappingStr = JSON.stringify(currentTemplate.column_name_mapping || {});
+    const newMappingStr = JSON.stringify(newMapping);
+    if (currentMappingStr !== newMappingStr) {
+      setCurrentTemplate({
+        ...currentTemplate,
+        column_name_mapping: newMapping
+      });
+    }
+  }, [selectedDataset, selectedFeatureColumns, currentTemplate.template_type]);
 
   // 加载模板列表
   const loadTemplates = async () => {
@@ -87,6 +164,10 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
     if (!datasetId) {
       setSelectedDataset(null);
       setTestSampleIndex(0);
+      setSelectedFeatureColumns([]); // 清空特征列选择
+      setCompositionColumns([]); // 清空元素列选择
+      setProcessingColumn([]); // 清空工艺列选择
+      setTargetColumns([]); // 清空目标属性选择
       return;
     }
 
@@ -96,6 +177,8 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
         const data = await response.json();
         setSelectedDataset(data);
         setTestSampleIndex(0); // 重置样本索引
+        setSelectedFeatureColumns([]); // 清空特征列选择
+        // 注意：compositionColumns、processingColumn、targetColumns 会在 useEffect 中自动更新
       }
     } catch (error) {
       console.error('加载数据集详情失败:', error);
@@ -115,6 +198,11 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
         output_format: '',
         reference_format: '{reference_samples}',
         analysis_protocol: '',
+        column_name_mapping: {
+          'Processing': 'Heat treatment method',
+          'Composition': 'Composition'
+        },
+        apply_mapping_to_target: true,
       });
       setIsEditing(false);
       if (onTemplateSelect) {
@@ -127,7 +215,15 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
       const response = await fetch(`http://localhost:8000/api/prompt-templates/${templateId}`);
       if (response.ok) {
         const data = await response.json();
-        setCurrentTemplate(data);
+        // 确保加载的模板有默认值
+        setCurrentTemplate({
+          ...data,
+          column_name_mapping: data.column_name_mapping || {
+            'Processing': 'Heat treatment method',
+            'Composition': 'Composition'
+          },
+          apply_mapping_to_target: data.apply_mapping_to_target ?? true,
+        });
         setIsEditing(false);
         if (onTemplateSelect) {
           onTemplateSelect(data);
@@ -254,30 +350,58 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
 
   // 预览模板（使用示例数据或真实数据渲染完整提示词）
   const handlePreview = async () => {
+    // 调试日志：打印所有相关状态变量
+    console.log('预览调试信息:', {
+      compositionColumns,
+      processingColumn,
+      targetColumns,
+      selectedFeatureColumns,
+      useRealData,
+      selectedDataset: selectedDataset ? '已选择' : '未选择',
+      datasetId: selectedDataset?.dataset_id
+    });
+
     try {
       let testSample: Record<string, any>;
       let referenceSamples: any[];
       let compositionColumn: string | string[];
-      let processingColumn: string;
-      let targetColumns: string[];
+      // 使用本地变量名避免与状态变量冲突
+      let localProcessingColumn: string[];
+      let localTargetColumns: string[];
 
       // 如果选择使用真实数据且已选择数据集
       if (useRealData && selectedDataset) {
+        // 使用状态变量中的列选择（已经在 useEffect 中自动检测）
+        // 添加防御性检查，确保数组已定义
+        const stateCompositionColumns = compositionColumns || [];
+        const stateProcessingColumn = processingColumn || [];
+        const stateTargetColumns = targetColumns || [];
+
+        const useCompositionColumns = stateCompositionColumns.length > 0
+          ? stateCompositionColumns
+          : (selectedDataset.columns || []).filter((col: string) =>
+              col.includes('at%') || col.includes('wt%')
+            );
+        const useProcessingColumn = stateProcessingColumn.length > 0
+          ? stateProcessingColumn
+          : (selectedDataset.columns || []).filter((col: string) =>
+              col.toLowerCase().includes('processing') || col.toLowerCase().includes('treatment')
+            );
+        const useTargetColumns = stateTargetColumns.length > 0
+          ? stateTargetColumns
+          : (currentTemplate.template_type === 'single_target'
+              ? ['UTS(MPa)']
+              : ['UTS(MPa)', 'El(%)']);
+
         // 使用 RAG 预览 API 获取真实样本数据
         const ragResponse = await fetch('http://localhost:8000/api/prediction/preview-rag', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             dataset_id: selectedDataset.dataset_id,
-            composition_column: selectedDataset.columns.filter((col: string) =>
-              col.includes('at%') || col.includes('wt%')
-            ),
-            processing_column: selectedDataset.columns.find((col: string) =>
-              col.toLowerCase().includes('processing') || col.toLowerCase().includes('treatment')
-            ) || 'Processing_Description',
-            target_columns: currentTemplate.template_type === 'single_target'
-              ? ['UTS(MPa)']
-              : ['UTS(MPa)', 'El(%)'],
+            composition_column: useCompositionColumns,
+            processing_column: useProcessingColumn.length > 0 ? useProcessingColumn : undefined,
+            target_columns: useTargetColumns,
             train_ratio: 0.8,
             random_seed: 42,
             max_retrieved_samples: 5,
@@ -292,27 +416,27 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
 
         const ragData = await ragResponse.json();
         testSample = ragData.test_sample;
-        referenceSamples = ragData.retrieved_samples;
-        compositionColumn = selectedDataset.columns.filter((col: string) =>
-          col.includes('at%') || col.includes('wt%')
-        );
-        processingColumn = selectedDataset.columns.find((col: string) =>
-          col.toLowerCase().includes('processing') || col.toLowerCase().includes('treatment')
-        ) || 'Processing_Description';
-        targetColumns = currentTemplate.template_type === 'single_target'
-          ? ['UTS(MPa)']
-          : ['UTS(MPa)', 'El(%)'];
+        referenceSamples = ragData.retrieved_samples || [];
+        compositionColumn = useCompositionColumns;
+        localProcessingColumn = useProcessingColumn;
+        localTargetColumns = useTargetColumns;
       } else {
         // 使用示例数据（从常量文件导入）
-        targetColumns = currentTemplate.template_type === 'single_target'
+        localTargetColumns = currentTemplate.template_type === 'single_target'
           ? ['UTS(MPa)']
           : ['UTS(MPa)', 'El(%)'];
 
         testSample = getExampleTestSample();
-        referenceSamples = EXAMPLE_SUPERALLOY_REFERENCES;
+        referenceSamples = EXAMPLE_SUPERALLOY_REFERENCES || [];
         compositionColumn = getExampleCompositionColumns();
-        processingColumn = 'Processing_Description';
+        // 示例数据中包含工艺列（改为数组）
+        localProcessingColumn = ['Processing_Description'];
       }
+
+      // 使用用户选择的特征列（而不是自动检测所有列）
+      // 防御性检查：确保 selectedFeatureColumns 是数组
+      const safeSelectedFeatureColumns = selectedFeatureColumns || [];
+      const featureColumns = safeSelectedFeatureColumns.length > 0 ? safeSelectedFeatureColumns : undefined;
 
       // 调用后端预览 API
       const requestBody = {
@@ -322,8 +446,9 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
         test_sample: testSample,
         reference_samples: referenceSamples,
         composition_column: compositionColumn,
-        processing_column: processingColumn,
-        target_columns: targetColumns
+        processing_column: localProcessingColumn.length > 0 ? localProcessingColumn : undefined,
+        target_columns: localTargetColumns,
+        feature_columns: featureColumns
       };
 
       console.log('预览请求数据:', JSON.stringify(requestBody, null, 2));
@@ -384,11 +509,14 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
         ? `真实数据：${selectedDataset.filename}，样本索引 ${testSampleIndex}`
         : '示例数据：高温合金组分 + 热处理工艺';
 
+      // 确保换行符正确显示（如果后端返回的是转义的 \n，需要替换为真实换行符）
+      const renderedPrompt = (result.rendered_prompt || '（渲染失败）').replace(/\\n/g, '\n');
+
       const preview = `
 === 渲染后的完整提示词 ===
 （使用${dataSource}）
 
-${result.rendered_prompt || '（渲染失败）'}
+${renderedPrompt}
 
 === 模板变量 ===
 ${JSON.stringify(result.template_variables || {}, null, 2)}
@@ -662,6 +790,115 @@ ${formatValue(currentTemplate.analysis_protocol)}
             />
           </div>
 
+          {/* 列名映射配置 */}
+          <div className="border-t border-gray-200 pt-4">
+            <div className="flex items-center justify-between mb-3">
+              <label className="block text-sm font-medium text-gray-700">
+                列名映射配置
+                <span className="ml-2 text-xs text-gray-500">（自定义提示词中显示的列名）</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentTemplate({
+                    ...currentTemplate,
+                    column_name_mapping: {
+                      'Processing': 'Heat treatment method',
+                      'Composition': 'Composition'
+                    }
+                  });
+                }}
+                className="text-xs text-blue-600 hover:text-blue-800"
+              >
+                重置为默认值
+              </button>
+            </div>
+
+            {/* 提示信息 */}
+            {selectedDataset && Object.keys(currentTemplate.column_name_mapping || {}).length === 0 && (
+              <div className="mb-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p className="text-sm text-yellow-800">
+                  💡 提示：系统已自动检测到您选择的列。您可以为每个列自定义显示名称（例如将 "Temperature" 改为 "测试温度"）。
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-2 bg-gray-50 p-3 rounded-lg max-h-96 overflow-y-auto">
+              {Object.entries(currentTemplate.column_name_mapping || {}).length === 0 ? (
+                <div className="text-center py-4 text-gray-500 text-sm">
+                  {selectedDataset
+                    ? "请先选择特征列，系统将自动填充列名映射配置"
+                    : "请先选择数据集"}
+                </div>
+              ) : (
+                Object.entries(currentTemplate.column_name_mapping || {}).map(([key, value], index) => (
+                  <div key={`${key}-${index}`} className="flex gap-3 items-center bg-white p-2 rounded border border-gray-200">
+                    <div className="flex-1">
+                      <div className="text-xs text-gray-500 mb-1">原始列名</div>
+                      <div className="font-mono text-sm text-gray-700 bg-gray-100 px-2 py-1 rounded">
+                        {key}
+                      </div>
+                    </div>
+                    <div className="text-gray-400">→</div>
+                    <div className="flex-1">
+                      <div className="text-xs text-gray-500 mb-1">显示名称</div>
+                      <input
+                        type="text"
+                        value={value}
+                        onChange={(e) => {
+                          const newMapping = { ...currentTemplate.column_name_mapping };
+                          newMapping[key] = e.target.value;
+                          setCurrentTemplate({ ...currentTemplate, column_name_mapping: newMapping });
+                        }}
+                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder={key}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newMapping = { ...currentTemplate.column_name_mapping };
+                        delete newMapping[key];
+                        setCurrentTemplate({ ...currentTemplate, column_name_mapping: newMapping });
+                      }}
+                      className="px-2 py-1 text-xs text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
+                      title="删除此映射"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Target Material 映射控制 */}
+            <div className="mt-3 bg-blue-50 p-3 rounded-lg">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={currentTemplate.apply_mapping_to_target ?? true}
+                  onChange={(e) => setCurrentTemplate({
+                    ...currentTemplate,
+                    apply_mapping_to_target: e.target.checked
+                  })}
+                  className="mt-0.5 w-4 h-4 text-blue-600 rounded"
+                />
+                <div>
+                  <span className="text-sm font-medium text-gray-700">
+                    对 Target Material 部分应用列名映射
+                  </span>
+                  <p className="text-xs text-gray-600 mt-1">
+                    取消勾选后，Target Material 将保持原始列名，仅 Reference Samples 应用映射
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <p className="text-xs text-gray-500 mt-2">
+              💡 列名映射示例：将 "Temperature" 映射为 "测试温度"，将 "Processing" 映射为 "热处理工艺"
+            </p>
+          </div>
+
           {/* 预览数据源选择 */}
           <div className="border-t border-gray-200 pt-4 space-y-3">
             <div className="flex items-center gap-2">
@@ -711,6 +948,74 @@ ${formatValue(currentTemplate.analysis_protocol)}
                       onChange={(e) => setTestSampleIndex(parseInt(e.target.value) || 0)}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2"
                     />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 特征列选择 */}
+            {useRealData && selectedDataset && (
+              <div className="pl-6 space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  选择特征列（可选）
+                  <span className="ml-2 text-xs text-gray-500">
+                    （除组分、工艺、目标属性外的其他列）
+                  </span>
+                </label>
+                <div className="bg-gray-50 p-3 rounded-lg max-h-40 overflow-y-auto">
+                  {selectedDataset.columns
+                    .filter((col: string) => {
+                      const isComposition = col.includes('at%') || col.includes('wt%');
+                      const isProcessing = col.toLowerCase().includes('processing') || col.toLowerCase().includes('treatment');
+                      const targetColumns = currentTemplate.template_type === 'single_target'
+                        ? ['UTS(MPa)']
+                        : ['UTS(MPa)', 'El(%)'];
+                      const isTarget = targetColumns.includes(col);
+                      return !isComposition && !isProcessing && !isTarget;
+                    })
+                    .map((col: string) => (
+                      <label key={col} className="flex items-center gap-2 py-1 cursor-pointer hover:bg-gray-100 px-2 rounded">
+                        <input
+                          type="checkbox"
+                          checked={selectedFeatureColumns.includes(col)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedFeatureColumns([...selectedFeatureColumns, col]);
+                            } else {
+                              setSelectedFeatureColumns(selectedFeatureColumns.filter(c => c !== col));
+                            }
+                          }}
+                          className="w-4 h-4 text-blue-600 rounded"
+                        />
+                        <span className="text-sm text-gray-700">{col}</span>
+                      </label>
+                    ))}
+                </div>
+                {selectedFeatureColumns.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // 自动将选择的特征列添加到列名映射配置中
+                        const newMapping = { ...currentTemplate.column_name_mapping };
+                        selectedFeatureColumns.forEach(col => {
+                          if (!newMapping[col]) {
+                            newMapping[col] = col; // 默认映射为自己
+                          }
+                        });
+                        setCurrentTemplate({ ...currentTemplate, column_name_mapping: newMapping });
+                      }}
+                      className="text-xs text-blue-600 hover:text-blue-800 underline"
+                    >
+                      将选择的特征列添加到列名映射配置
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedFeatureColumns([])}
+                      className="text-xs text-red-600 hover:text-red-800"
+                    >
+                      清空选择
+                    </button>
                   </div>
                 )}
               </div>

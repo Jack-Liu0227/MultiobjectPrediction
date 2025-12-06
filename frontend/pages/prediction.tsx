@@ -15,16 +15,18 @@ import { UploadResponse } from '@/lib/types';
 import { startPrediction, getTaskStatus } from '@/lib/api';
 
 // 配置标签页类型
-type ConfigTab = 'elements' | 'processing' | 'targets' | 'rag' | 'llm' | 'split' | 'template';
+type ConfigTab = 'elements' | 'processing' | 'targets' | 'features' | 'rag' | 'llm' | 'split' | 'template';
 
 // 预测配置接口
 interface PredictionSettings {
   // 元素配置
   compositionColumns: string[];
-  // 工艺配置
-  processingColumn: string;
+  // 工艺配置（可选，支持多选）
+  processingColumn: string[];
   // 目标属性
   targetColumns: string[];
+  // 特征选择
+  featureColumns: string[];
   // RAG 配置
   maxRetrievedSamples: number;
   similarityThreshold: number;
@@ -59,8 +61,9 @@ export default function PredictionPage() {
   // 预测配置
   const [settings, setSettings] = useState<PredictionSettings>({
     compositionColumns: [],
-    processingColumn: '',
+    processingColumn: [],  // 工艺列默认为空数组（可选，支持多选）
     targetColumns: [],
+    featureColumns: [],
     maxRetrievedSamples: 50,
     similarityThreshold: 0.3,
     trainRatio: 0.8, // 默认训练集比例 80%
@@ -152,10 +155,19 @@ export default function PredictionPage() {
       }
 
       // 恢复配置（从嵌套的 config 对象读取）
+      // 处理 processingColumn：确保总是数组（兼容旧数据可能是字符串或 null）
+      let processingColumn: string[] = [];
+      if (Array.isArray(config.processing_column)) {
+        processingColumn = config.processing_column;
+      } else if (typeof config.processing_column === 'string' && config.processing_column) {
+        processingColumn = [config.processing_column];
+      }
+
       setSettings({
         compositionColumns: config.composition_column || [],
-        processingColumn: config.processing_column || '',
+        processingColumn: processingColumn,
         targetColumns: config.target_columns || [],
+        featureColumns: config.feature_columns || [],
         maxRetrievedSamples: config.max_retrieved_samples || 50,
         similarityThreshold: config.similarity_threshold || 0.3,
         trainRatio: config.train_ratio || 0.8,
@@ -247,7 +259,7 @@ export default function PredictionPage() {
   // 自动检测列类型
   const autoDetectColumns = (cols: string[]) => {
     const compositionCols: string[] = [];
-    let processingCol = '';
+    const processingCols: string[] = [];  // 改为数组，支持多选
     const targetCols: string[] = [];
 
     cols.forEach(col => {
@@ -257,9 +269,9 @@ export default function PredictionPage() {
       if (lower.includes('wt%') || lower.includes('at%')) {
         compositionCols.push(col);
       }
-      // 检测工艺列
+      // 检测工艺列（支持多个）
       else if (lower.includes('processing') || lower.includes('treatment') || lower.includes('description')) {
-        if (!processingCol) processingCol = col;
+        processingCols.push(col);
       }
       // 检测目标列（含单位）
       else if (col.includes('(') && col.includes(')')) {
@@ -294,7 +306,7 @@ export default function PredictionPage() {
     setSettings(prev => ({
       ...prev,
       compositionColumns: compositionCols,
-      processingColumn: processingCol,
+      processingColumn: processingCols,  // 使用数组
       targetColumns: defaultTargets,
     }));
   };
@@ -319,6 +331,7 @@ export default function PredictionPage() {
           composition_column: settings.compositionColumns,  // 发送所有元素列
           processing_column: settings.processingColumn,
           target_columns: settings.targetColumns,
+          feature_columns: settings.featureColumns.length > 0 ? settings.featureColumns : undefined, // 特征列（可选）
           train_ratio: settings.trainRatio, // 使用用户设置的训练集比例
           random_seed: settings.randomSeed, // 随机种子
           max_retrieved_samples: settings.maxRetrievedSamples,
@@ -363,11 +376,10 @@ export default function PredictionPage() {
     }, 2000);
   };
 
-  // 验证配置
+  // 验证配置（工艺列现在是可选的）
   const isConfigValid = () => {
     return (
       settings.compositionColumns.length > 0 &&
-      settings.processingColumn &&
       settings.targetColumns.length >= 1 &&  // 支持单目标预测
       settings.targetColumns.length <= 5
     );
@@ -392,7 +404,7 @@ export default function PredictionPage() {
       const lower = col.toLowerCase();
       // 排除组成列和工艺列
       if (settings.compositionColumns.includes(col)) return false;
-      if (col === settings.processingColumn) return false;
+      if (Array.isArray(settings.processingColumn) && settings.processingColumn.includes(col)) return false;
       if (lower.includes('wt%') || lower.includes('at%')) return false;
       if (lower.includes('processing') || lower.includes('description')) return false;
       // 只保留看起来像数值列的（含括号或单位）
@@ -405,6 +417,7 @@ export default function PredictionPage() {
     { id: 'elements' as ConfigTab, label: '📊 元素选择', icon: '📊' },
     { id: 'processing' as ConfigTab, label: '🔧 工艺参数', icon: '🔧' },
     { id: 'targets' as ConfigTab, label: '🎯 目标属性', icon: '🎯' },
+    { id: 'features' as ConfigTab, label: '⚙️ 特征选择', icon: '⚙️' },
     { id: 'split' as ConfigTab, label: '✂️ 数据集划分', icon: '✂️' },
     { id: 'rag' as ConfigTab, label: '🔍 RAG配置', icon: '🔍' },
     { id: 'llm' as ConfigTab, label: '🤖 LLM配置', icon: '🤖' },
@@ -477,7 +490,7 @@ export default function PredictionPage() {
                   setTaskNote('');
                   setSettings({
                     compositionColumns: [],
-                    processingColumn: '',
+                    processingColumn: [],
                     targetColumns: [],
                     maxRetrievedSamples: 50,
                     similarityThreshold: 0.3,
@@ -710,15 +723,34 @@ export default function PredictionPage() {
   function renderTabContent() {
     switch (activeTab) {
       case 'elements':
+        const elementColumns = allColumns.filter(col => {
+          const lower = col.toLowerCase();
+          return lower.includes('wt%') || lower.includes('at%') || lower.includes('composition');
+        });
+
         return (
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">选择元素组成列</h3>
             <p className="text-sm text-gray-500 mb-4">选择包含元素含量（wt% 或 at%）的列</p>
+
+            {/* 全选/取消全选按钮 */}
+            <div className="flex gap-2 mb-3">
+              <button
+                onClick={() => setSettings(prev => ({ ...prev, compositionColumns: elementColumns }))}
+                className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+              >
+                全选
+              </button>
+              <button
+                onClick={() => setSettings(prev => ({ ...prev, compositionColumns: [] }))}
+                className="px-3 py-1 text-sm bg-gray-500 text-white rounded hover:bg-gray-600"
+              >
+                取消全选
+              </button>
+            </div>
+
             <div className="space-y-2 max-h-64 overflow-y-auto border rounded-lg p-3">
-              {allColumns.filter(col => {
-                const lower = col.toLowerCase();
-                return lower.includes('wt%') || lower.includes('at%') || lower.includes('composition');
-              }).map((col) => (
+              {elementColumns.map((col) => (
                 <label key={col} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded cursor-pointer">
                   <input
                     type="checkbox"
@@ -744,17 +776,32 @@ export default function PredictionPage() {
       case 'processing':
         return (
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">选择工艺描述列</h3>
-            <p className="text-sm text-gray-500 mb-4">选择包含热处理或加工工艺描述的列</p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              选择工艺描述列 <span className="text-sm text-gray-500 font-normal">（可选）</span>
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+              选择包含热处理或加工工艺描述的列。如果数据集中没有工艺列，可以不选择。
+            </p>
             <div className="space-y-2 max-h-64 overflow-y-auto border rounded-lg p-3">
               {allColumns.map((col) => (
                 <label key={col} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded cursor-pointer">
                   <input
-                    type="radio"
-                    name="processingColumn"
-                    checked={settings.processingColumn === col}
-                    onChange={() => setSettings(prev => ({ ...prev, processingColumn: col }))}
-                    className="w-4 h-4 text-blue-600"
+                    type="checkbox"
+                    checked={Array.isArray(settings.processingColumn) && settings.processingColumn.includes(col)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSettings(prev => ({
+                          ...prev,
+                          processingColumn: Array.isArray(prev.processingColumn) ? [...prev.processingColumn, col] : [col]
+                        }));
+                      } else {
+                        setSettings(prev => ({
+                          ...prev,
+                          processingColumn: Array.isArray(prev.processingColumn) ? prev.processingColumn.filter(c => c !== col) : []
+                        }));
+                      }
+                    }}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                   />
                   <span className="text-sm">{col}</span>
                   {(col.toLowerCase().includes('processing') || col.toLowerCase().includes('treatment')) && (
@@ -763,19 +810,58 @@ export default function PredictionPage() {
                 </label>
               ))}
             </div>
-            {settings.processingColumn && (
-              <p className="text-sm text-green-600 mt-3">✓ 已选择: {settings.processingColumn}</p>
+            {Array.isArray(settings.processingColumn) && settings.processingColumn.length > 0 ? (
+              <>
+                <p className="text-sm text-green-600 mt-3">✓ 已选择 {settings.processingColumn.length} 个工艺列:</p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {settings.processingColumn.map(col => (
+                    <span key={col} className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                      {col}
+                    </span>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setSettings(prev => ({ ...prev, processingColumn: [] }))}
+                  className="mt-2 text-sm text-red-600 hover:text-red-800"
+                >
+                  清空所有
+                </button>
+              </>
+            ) : (
+              <p className="text-sm text-gray-500 mt-3">ℹ️ 未选择工艺列，提示词中将不包含工艺相关内容</p>
             )}
           </div>
         );
 
       case 'targets':
+        const availableTargetCols = getAvailableTargetColumns();
+
         return (
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">选择目标属性列</h3>
             <p className="text-sm text-gray-500 mb-4">选择 1-5 个需要预测的性质列（支持单目标和多目标预测）</p>
+
+            {/* 全选/取消全选按钮 */}
+            <div className="flex gap-2 mb-3">
+              <button
+                onClick={() => setSettings(prev => ({
+                  ...prev,
+                  targetColumns: availableTargetCols.slice(0, 5) // 最多选5个
+                }))}
+                className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+              >
+                全选（最多5个）
+              </button>
+              <button
+                onClick={() => setSettings(prev => ({ ...prev, targetColumns: [] }))}
+                className="px-3 py-1 text-sm bg-gray-500 text-white rounded hover:bg-gray-600"
+              >
+                取消全选
+              </button>
+            </div>
+
             <div className="space-y-2 max-h-64 overflow-y-auto border rounded-lg p-3">
-              {getAvailableTargetColumns().map((col) => (
+              {availableTargetCols.map((col) => (
                 <label key={col} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded cursor-pointer">
                   <input
                     type="checkbox"
@@ -790,6 +876,84 @@ export default function PredictionPage() {
             </div>
             <p className={`text-sm mt-3 ${settings.targetColumns.length >= 1 ? 'text-green-600' : 'text-orange-600'}`}>
               已选择 {settings.targetColumns.length}/5 个目标列 {settings.targetColumns.length === 0 && '(至少需要1个)'}
+            </p>
+          </div>
+        );
+
+      case 'features':
+        // 获取可用的特征列（排除已选择的组分列、工艺列和目标列）
+        const getAvailableFeatureColumns = () => {
+          const excludedColumns = [
+            ...settings.compositionColumns,
+            ...(Array.isArray(settings.processingColumn) ? settings.processingColumn : []),
+            ...settings.targetColumns
+          ].filter(Boolean);
+
+          return allColumns.filter(col => !excludedColumns.includes(col));
+        };
+
+        const toggleFeatureColumn = (col: string) => {
+          setSettings(prev => ({
+            ...prev,
+            featureColumns: prev.featureColumns.includes(col)
+              ? prev.featureColumns.filter(c => c !== col)
+              : [...prev.featureColumns, col]
+          }));
+        };
+
+        const availableFeatureCols = getAvailableFeatureColumns();
+
+        return (
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">选择特征列</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              选择用于 RAG 检索的额外特征列（可选）。默认情况下，系统使用组分和工艺参数进行检索。
+            </p>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+              <p className="text-sm text-blue-800">
+                💡 提示：特征列可以包含任何有助于样本匹配的数值或分类特征，如温度、压力、时间等工艺参数。
+              </p>
+            </div>
+
+            {/* 全选/取消全选按钮 */}
+            {availableFeatureCols.length > 0 && (
+              <div className="flex gap-2 mb-3">
+                <button
+                  onClick={() => setSettings(prev => ({ ...prev, featureColumns: availableFeatureCols }))}
+                  className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+                >
+                  全选
+                </button>
+                <button
+                  onClick={() => setSettings(prev => ({ ...prev, featureColumns: [] }))}
+                  className="px-3 py-1 text-sm bg-gray-500 text-white rounded hover:bg-gray-600"
+                >
+                  取消全选
+                </button>
+              </div>
+            )}
+
+            <div className="space-y-2 max-h-64 overflow-y-auto border rounded-lg p-3">
+              {availableFeatureCols.length === 0 ? (
+                <p className="text-sm text-gray-500 italic">
+                  没有可用的特征列（所有列已被用作组分、工艺或目标列）
+                </p>
+              ) : (
+                availableFeatureCols.map((col) => (
+                  <label key={col} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.featureColumns.includes(col)}
+                      onChange={() => toggleFeatureColumn(col)}
+                      className="w-4 h-4 text-blue-600 rounded"
+                    />
+                    <span className="text-sm">{col}</span>
+                  </label>
+                ))
+              )}
+            </div>
+            <p className="text-sm mt-3 text-gray-600">
+              已选择 {settings.featureColumns.length} 个特征列
             </p>
           </div>
         );
@@ -828,15 +992,15 @@ export default function PredictionPage() {
                 <div className="flex items-center space-x-2">
                   <input
                     type="number"
-                    min={1}
-                    value={settings.maxRetrievedSamples || ''}
+                    min={0}
+                    value={settings.maxRetrievedSamples ?? ''}
                     onChange={(e) => {
                       const value = e.target.value;
                       if (value === '') {
                         setSettings(prev => ({ ...prev, maxRetrievedSamples: 0 }));
                       } else {
                         const numValue = parseInt(value);
-                        if (!isNaN(numValue) && numValue >= 1) {
+                        if (!isNaN(numValue) && numValue >= 0) {
                           setSettings(prev => ({ ...prev, maxRetrievedSamples: numValue }));
                         }
                       }
@@ -876,6 +1040,11 @@ export default function PredictionPage() {
               <p className="text-xs text-gray-500 mt-2">
                 💡 可直接输入数量（如50）或比例（如0.8表示80%）。样本数越多，预测越准确但速度越慢。
               </p>
+              {settings.maxRetrievedSamples === 0 && (
+                <div className="mt-2 text-sm text-purple-600 bg-purple-50 border border-purple-200 rounded p-2">
+                  🔮 零样本模式：设置为 0 时，系统将使用零样本提示词模板，不检索参考样本，完全依赖 LLM 的知识进行预测
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">相似度阈值</label>
@@ -1008,7 +1177,6 @@ export default function PredictionPage() {
               <input
                 type="number"
                 min={1}
-                max={100000}
                 value={settings.sampleSize || ''}
                 onChange={(e) => {
                   const value = e.target.value;
@@ -1024,7 +1192,7 @@ export default function PredictionPage() {
                 className="w-32 border border-gray-300 rounded-lg px-3 py-2"
               />
               <p className="text-xs text-gray-500 mt-1">
-                从测试集中随机抽取的样本数量，范围: 1-100，推荐值: 10
+                从测试集中随机抽取的样本数量（无上限限制），推荐值: 10
               </p>
               <div className="mt-2 text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded p-2">
                 ⚠️ 注意：样本数越多，预测时间越长，API 调用成本越高
@@ -1038,13 +1206,12 @@ export default function PredictionPage() {
               <input
                 type="number"
                 min={1}
-                max={20}
                 value={settings.workers}
                 onChange={(e) => setSettings(prev => ({ ...prev, workers: parseInt(e.target.value) || 5 }))}
                 className="w-32 border border-gray-300 rounded-lg px-3 py-2"
               />
               <p className="text-xs text-gray-500 mt-1">
-                并行预测的线程数，范围: 1-20,推荐值: 5
+                并行预测的线程数（无上限限制），推荐值: 5
               </p>
               <div className="mt-2 text-sm text-blue-600 bg-blue-50 border border-blue-200 rounded p-2">
                 💡 提示：增加线程数可以加快预测速度，但会增加 API 并发请求数

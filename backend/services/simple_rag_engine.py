@@ -177,7 +177,8 @@ class SimpleRAGEngine:
         model_name: str = "gemini-2.5-flash",
         temperature: float = 1.0,
         return_details: bool = False,
-        custom_template: Optional[Dict] = None
+        custom_template: Optional[Dict] = None,
+        query_features: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         使用 LLM 生成多目标预测
@@ -185,12 +186,14 @@ class SimpleRAGEngine:
         Args:
             query_composition: 查询样本的组成
             query_processing: 查询样本的热处理
-            similar_samples: 相似样本列表
+            similar_samples: 相似样本列表（每个样本可包含特征列）
             target_columns: 目标列名列表
             model_provider: 模型提供商
             model_name: 模型名称
             temperature: 温度参数
             return_details: 是否返回详细信息（prompt 和 LLM 响应）
+            custom_template: 自定义模板
+            query_features: 查询样本的特征列字典（可选），例如 {"Temperature": 298, "Pressure": 1}
 
         Returns:
             如果 return_details=False: {target_column: prediction_value}
@@ -207,15 +210,79 @@ class SimpleRAGEngine:
             prompt = None
             try:
                 from services.prompt_builder import PromptBuilder
-                prompt_builder = PromptBuilder(custom_template=custom_template)
+                from services.prompt_template_manager import PromptTemplateManager
 
-                # 格式化测试样本
-                test_sample = f"Composition: {query_composition}\nProcessing: {query_processing}"
+                # 从自定义模板中获取列名映射，如果没有则使用默认值
+                column_name_mapping = None
+                if custom_template and "column_name_mapping" in custom_template:
+                    column_name_mapping = custom_template["column_name_mapping"]
+                else:
+                    column_name_mapping = PromptTemplateManager.get_default_column_mapping()
 
-                # 格式化相似样本（包含所有目标属性）
+                # 从自定义模板中获取 apply_mapping_to_target 选项，默认为 True
+                apply_mapping_to_target = True
+                if custom_template and "apply_mapping_to_target" in custom_template:
+                    apply_mapping_to_target = custom_template["apply_mapping_to_target"]
+
+                logger.info(f"使用列名映射: {column_name_mapping}")
+
+                prompt_builder = PromptBuilder(
+                    custom_template=custom_template,
+                    column_name_mapping=column_name_mapping,
+                    apply_mapping_to_target=apply_mapping_to_target
+                )
+
+                # 使用统一的样本文本构建工具
+                from services.sample_text_builder import SampleTextBuilder
+
+                # 格式化测试样本（使用原始列名，后续由 PromptBuilder 应用列名映射）
+                # 处理 query_processing：支持字典（多工艺列）或字符串（单工艺列）
+                processing_dict = None
+                if query_processing:
+                    if isinstance(query_processing, dict):
+                        processing_dict = query_processing
+                    elif str(query_processing).strip():
+                        # 单工艺列（向后兼容）：使用 "Processing" 作为键
+                        processing_dict = {"Processing": query_processing}
+
+                # 构建测试样本文本
+                test_sample = SampleTextBuilder.build_sample_text(
+                    composition=query_composition,
+                    processing_columns=processing_dict,
+                    feature_columns=query_features
+                )
+                if not test_sample:
+                    test_sample = "No data available"
+
+                # 格式化相似样本
+                # 优先使用已经构建好的 sample_text（已应用列名映射）
+                # 如果不存在，则重新构建（向后兼容）
                 retrieved_samples = []
                 for sample in similar_samples:
-                    sample_text = f"Composition: {sample['composition']}\nProcessing: {sample['processing']}"
+                    # 优先使用已经存在的 sample_text
+                    if 'sample_text' in sample and sample['sample_text']:
+                        sample_text = sample['sample_text']
+                    else:
+                        # 向后兼容：如果没有 sample_text，则重新构建
+                        # 确定工艺列列表
+                        processing_columns = None
+                        if isinstance(query_processing, dict):
+                            processing_columns = list(query_processing.keys())
+                        elif sample.get('processing'):
+                            # 向后兼容：单工艺列
+                            processing_columns = ["processing"]
+
+                        # 确定特征列列表
+                        feature_columns = list(query_features.keys()) if query_features else None
+
+                        # 使用 SampleTextBuilder 构建样本文本
+                        sample_text = SampleTextBuilder.build_from_dict(
+                            sample_dict=sample,
+                            composition_key="composition",
+                            processing_columns=processing_columns,
+                            feature_columns=feature_columns
+                        )
+
                     # metadata 包含所有目标列的值
                     retrieved_samples.append((sample_text, 1.0, sample))
 
@@ -280,14 +347,16 @@ class SimpleRAGEngine:
                     return predictions
 
             except Exception as e:
-                logger.error(f"LLM prediction failed: {e}")
+                logger.error(f"LLM prediction failed: {e}", exc_info=True)
                 # 预测失败时，填充 0 而不是使用平均值
                 predictions = {col: 0.0 for col in target_columns}
+                error_msg = f"Error: {str(e)}"
+                logger.warning(f"使用默认值 0.0 填充所有目标属性: {list(target_columns)}")
                 if return_details:
                     return {
                         'predictions': predictions,
-                        'prompt': prompt,  # 保存已构建的 prompt（如果有）
-                        'llm_response': f"Error: {str(e)}",
+                        'prompt': prompt if 'prompt' in locals() else None,  # 保存已构建的 prompt（如果有）
+                        'llm_response': error_msg,
                         'similar_samples': similar_samples
                     }
                 else:
@@ -349,10 +418,19 @@ class SimpleRAGEngine:
                 if match:
                     predictions[target_col] = float(match.group(1))
 
-        # 确保所有目标都有值（即使是 None）
+        # 确保所有目标都有值，解析失败时使用默认值 0.0
+        missing_targets = []
         for target_col in target_columns:
-            if target_col not in predictions:
-                predictions[target_col] = None
+            if target_col not in predictions or predictions[target_col] is None:
+                predictions[target_col] = 0.0
+                missing_targets.append(target_col)
+
+        # 记录解析失败的详细信息
+        if missing_targets:
+            logger.warning(
+                f"LLM 响应解析失败，以下目标属性使用默认值 0.0: {missing_targets}\n"
+                f"响应内容（前500字符）: {text[:500]}"
+            )
 
         return predictions
 

@@ -275,7 +275,10 @@ async def preview_rag_retrieval(request: RAGPreviewRequest):
             composition_columns = request.composition_column
 
         # 验证列存在
-        required_cols = composition_columns + [request.processing_column] + request.target_columns
+        required_cols = composition_columns + request.target_columns
+        # 工艺列是可选的，只有在提供时才验证
+        if request.processing_column:
+            required_cols.extend(request.processing_column)
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
             raise HTTPException(status_code=400, detail=f"缺少必需的列: {missing_cols}")
@@ -339,9 +342,25 @@ async def preview_rag_retrieval(request: RAGPreviewRequest):
         for _, row in train_df.iterrows():
             unit_type, composition_str = format_composition(row, composition_columns)
             if unit_type:
-                text = f"Composition ({unit_type}): {composition_str}\nProcessing: {row[request.processing_column]}"
+                text = f"Composition ({unit_type}): {composition_str}"
             else:
-                text = f"Composition: {composition_str}\nProcessing: {row[request.processing_column]}"
+                text = f"Composition: {composition_str}"
+
+            # 添加工艺列（支持多选）- 每个工艺列保留独立标签
+            if request.processing_column:
+                for proc_col in request.processing_column:
+                    if proc_col in row.index:
+                        proc_value = row[proc_col]
+                        if proc_value and str(proc_value).strip():
+                            # 使用原始列名作为标签
+                            text += f"\n{proc_col}: {proc_value}"
+
+            # 添加特征列（如果配置了）
+            if request.feature_columns:
+                for feat_col in request.feature_columns:
+                    if feat_col in row.index:
+                        text += f"\n{feat_col}: {row[feat_col]}"
+
             train_texts.append(text)
 
         train_embeddings = rag_engine.create_embeddings(train_texts)
@@ -354,9 +373,24 @@ async def preview_rag_retrieval(request: RAGPreviewRequest):
         # 构建查询文本（格式化组分）
         unit_type, test_composition_str = format_composition(test_row, composition_columns)
         if unit_type:
-            query_text = f"Composition ({unit_type}): {test_composition_str}\nProcessing: {test_row[request.processing_column]}"
+            query_text = f"Composition ({unit_type}): {test_composition_str}"
         else:
-            query_text = f"Composition: {test_composition_str}\nProcessing: {test_row[request.processing_column]}"
+            query_text = f"Composition: {test_composition_str}"
+
+        # 添加工艺列（支持多选）- 每个工艺列保留独立标签
+        if request.processing_column:
+            for proc_col in request.processing_column:
+                if proc_col in test_row.index:
+                    proc_value = test_row[proc_col]
+                    if proc_value and str(proc_value).strip():
+                        # 使用原始列名作为标签
+                        query_text += f"\n{proc_col}: {proc_value}"
+
+        # 添加特征列到查询文本（如果配置了）
+        if request.feature_columns:
+            for feat_col in request.feature_columns:
+                if feat_col in test_row.index:
+                    query_text += f"\n{feat_col}: {test_row[feat_col]}"
 
         # 检索相似样本
         similar_indices = rag_engine.retrieve_similar_samples(

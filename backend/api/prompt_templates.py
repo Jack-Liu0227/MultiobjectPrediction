@@ -28,6 +28,14 @@ class PromptTemplateData(BaseModel):
     reference_format: str = Field(..., description="参考样本格式")
     analysis_protocol: str = Field(default="", description="分析协议")
     predictions_json_template: str = Field(default="", description="自定义预测 JSON 模板（可选）")
+    column_name_mapping: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="列名映射配置，例如 {'Processing': 'Heat treatment method'}"
+    )
+    apply_mapping_to_target: bool = Field(
+        default=True,
+        description="是否对 Target Material 部分应用列名映射。默认为 True。设置为 False 时，Target Material 保持原始列名"
+    )
 
 
 class PromptTemplateInfo(BaseModel):
@@ -53,12 +61,21 @@ class PromptPreviewRequest(BaseModel):
     system_role: str = Field(default="", description="系统角色")
     analysis_protocol: str = Field(default="", description="分析协议")
     predictions_json_template: str = Field(default="", description="自定义预测 JSON 模板（可选）")
+    column_name_mapping: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="列名映射配置，例如 {'Processing': 'Heat treatment method'}"
+    )
+    apply_mapping_to_target: bool = Field(
+        default=True,
+        description="是否对 Target Material 部分应用列名映射"
+    )
 
     # 其他请求字段
     test_sample: Dict = Field(..., description="测试样本数据")
     target_columns: List[str] = Field(..., description="目标属性列表")
     composition_column: Union[str, List[str]] = Field(..., description="组分列名或列名列表")
-    processing_column: str = Field(..., description="工艺列名")
+    processing_column: Optional[List[str]] = Field(default=None, description="工艺列名列表（可选，支持多选）")
+    feature_columns: Optional[List[str]] = Field(default=None, description="特征列名列表（可选）")
     reference_samples: Optional[List[Dict]] = Field(default=[], description="参考样本列表")
 
 class PromptPreviewResponse(BaseModel):
@@ -100,7 +117,22 @@ async def preview_template(request: PromptPreviewRequest):
         }
 
         # 创建 PromptBuilder 实例（复用真实预测中的自定义模板逻辑）
-        prompt_builder = PromptBuilder(custom_template=template_dict)
+        # 使用请求中的列名映射，如果没有则使用默认值
+        column_name_mapping = request.column_name_mapping
+        if not column_name_mapping:
+            column_name_mapping = template_manager.get_default_column_mapping()
+
+        logger.info(f"预览使用列名映射: {column_name_mapping}")
+        logger.info(f"预览使用特征列: {request.feature_columns}")
+        logger.info(f"预览使用工艺列: {request.processing_column}")
+        logger.info(f"预览使用组分列: {request.composition_column}")
+        logger.info(f"预览使用目标列: {request.target_columns}")
+
+        prompt_builder = PromptBuilder(
+            custom_template=template_dict,
+            column_name_mapping=column_name_mapping,
+            apply_mapping_to_target=request.apply_mapping_to_target
+        )
 
         # 统一组分列为列表
         if isinstance(request.composition_column, str):
@@ -111,6 +143,20 @@ async def preview_template(request: PromptPreviewRequest):
         # 测试样本的组分与工艺（使用公共工具函数）
         composition_str = format_composition(request.test_sample, comp_cols)
 
+        # 提取工艺信息（支持多选）- 应用列名映射
+        processing_str = ""
+        if request.processing_column:
+            processing_parts = []
+            for proc_col in request.processing_column:
+                if proc_col in request.test_sample:
+                    proc_value = request.test_sample[proc_col]
+                    if proc_value and str(proc_value).strip():
+                        # 应用列名映射
+                        mapped_col_name = column_name_mapping.get(proc_col, proc_col)
+                        processing_parts.append(f"{mapped_col_name}: {proc_value}")
+            if processing_parts:
+                processing_str = "\n".join(processing_parts)
+
         # 判断单位类型（仅用于预览变量展示）
         unit = ""
         if any("wt%" in col.lower() for col in comp_cols):
@@ -118,33 +164,71 @@ async def preview_template(request: PromptPreviewRequest):
         elif any("at%" in col.lower() for col in comp_cols):
             unit = "at%"
 
-        processing = request.test_sample.get(request.processing_column, "")
+        # 使用统一的样本文本构建工具
+        from services.sample_text_builder import SampleTextBuilder
 
-        # 按真实预测路径构造测试样本文本
-        test_sample_text = f"Composition: {composition_str}\nProcessing: {processing}"
+        # 提取工艺列数据
+        processing_dict = {}
+        if request.processing_column:
+            for proc_col in request.processing_column:
+                if proc_col in request.test_sample:
+                    proc_value = request.test_sample[proc_col]
+                    if proc_value and str(proc_value).strip():
+                        processing_dict[proc_col] = proc_value
+
+        # 提取特征列数据
+        feature_dict = {}
+        if request.feature_columns:
+            for feat_col in request.feature_columns:
+                if feat_col in request.test_sample:
+                    feature_dict[feat_col] = request.test_sample[feat_col]
+
+        # 构建测试样本文本
+        test_sample_text = SampleTextBuilder.build_sample_text(
+            composition=composition_str,
+            processing_columns=processing_dict if processing_dict else None,
+            feature_columns=feature_dict if feature_dict else None
+        )
 
         # 构造相似样本列表（与 SimpleRAGEngine.generate_multi_target_prediction 一致）
         similar_samples: List[Dict] = []
         for ref_sample in (request.reference_samples or [])[:5]:  # 最多 5 个参考样本
             ref_comp_str = format_composition(ref_sample, comp_cols)
-            ref_processing = ref_sample.get(request.processing_column, "")
 
             sample_data: Dict[str, Any] = {
                 "composition": ref_comp_str,
-                "processing": ref_processing,
             }
+
+            # 添加工艺列（支持多选）
+            if request.processing_column:
+                for proc_col in request.processing_column:
+                    if proc_col in ref_sample:
+                        sample_data[proc_col] = ref_sample[proc_col]
 
             # 添加所有目标属性的真实值
             for target_col in request.target_columns:
                 if target_col in ref_sample and ref_sample[target_col] is not None:
                     sample_data[target_col] = ref_sample[target_col]
 
+            # 添加特征列
+            if request.feature_columns:
+                for feat_col in request.feature_columns:
+                    if feat_col in ref_sample:
+                        sample_data[feat_col] = ref_sample[feat_col]
+
             similar_samples.append(sample_data)
 
         # 转换为 PromptBuilder 需要的 retrieved_samples 结构
+        # 使用统一的样本文本构建工具
         retrieved_samples = []
         for sample in similar_samples:
-            sample_text = f"Composition: {sample['composition']}\nProcessing: {sample['processing']}"
+            # 使用 SampleTextBuilder 构建样本文本
+            sample_text = SampleTextBuilder.build_from_dict(
+                sample_dict=sample,
+                composition_key="composition",
+                processing_columns=request.processing_column,
+                feature_columns=request.feature_columns
+            )
             retrieved_samples.append((sample_text, 1.0, sample))
 
         # 使用 PromptBuilder 统一构建完整提示词（支持单/多目标 + 自定义模板）
@@ -191,13 +275,16 @@ async def preview_template(request: PromptPreviewRequest):
                 request.target_columns[0],
             )
 
+        # 应用列名映射到测试样本（与 PromptBuilder.build_prompt() 保持一致）
+        mapped_test_sample = prompt_builder._apply_column_name_mapping(test_sample_text)  # type: ignore[attr-defined]
+
         template_variables: Dict[str, Any] = {
-            "test_sample": test_sample_text,
+            "test_sample": mapped_test_sample,  # 使用映射后的测试样本文本
             "reference_samples": reference_section,
             "target_properties_list": ", ".join(request.target_columns),
             "num_targets": len(request.target_columns),
             "composition": composition_str,
-            "processing": processing,
+            "processing": processing_str,  # 使用提取的工艺字符串（可能为空字符串）
             "unit": unit,
             "reference_samples_count": len(similar_samples),
         }

@@ -30,7 +30,7 @@ export default function PredictionConfig({
     similarityThreshold: initialConfig?.similarityThreshold || 0.3,
     modelProvider: initialConfig?.modelProvider || 'gemini',
     modelName: initialConfig?.modelName || 'gemini-2.5-flash',
-    temperature: initialConfig?.temperature || 1.0,
+    temperature: initialConfig?.temperature || 0.0,
   });
 
   // 模型提供商选项

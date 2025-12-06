@@ -270,20 +270,12 @@ export default function PredictionTraceModal({
 
                       <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-5 border border-blue-200">
                         <div className="space-y-4">
-                          {/* 组分信息 */}
+                          {/* 样本描述（统一格式） */}
                           <div>
-                            <p className="text-sm font-medium text-gray-700 mb-2">🧪 组分（Composition）</p>
-                            <p className="font-mono text-sm text-gray-900 bg-white rounded px-3 py-2 border border-gray-200">
-                              {traceData.composition}
-                            </p>
-                          </div>
-
-                          {/* 工艺信息 */}
-                          <div>
-                            <p className="text-sm font-medium text-gray-700 mb-2">⚙️ 工艺（Processing）</p>
-                            <p className="text-sm text-gray-900 bg-white rounded px-3 py-2 border border-gray-200">
-                              {traceData.processing}
-                            </p>
+                            <p className="text-sm font-medium text-gray-700 mb-2">📋 样本描述（Sample Description）</p>
+                            <div className="font-mono text-sm text-gray-900 bg-white rounded px-3 py-2 border border-gray-200 whitespace-pre-line">
+                              {traceData.sample_text}
+                            </div>
                           </div>
 
                           {/* 样本索引 */}
@@ -369,8 +361,7 @@ export default function PredictionTraceModal({
                           <thead className="bg-gradient-to-r from-blue-50 to-indigo-50">
                             <tr>
                               <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase sticky left-0 bg-blue-50 z-10">#</th>
-                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase">组分</th>
-                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase">工艺</th>
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase min-w-[300px]">样本描述</th>
                               {Object.keys(traceData.true_values).map(key => (
                                 <th key={key} className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase">
                                   {key}
@@ -384,11 +375,10 @@ export default function PredictionTraceModal({
                                 <td className="px-4 py-3 font-medium text-gray-900 sticky left-0 bg-white z-10">
                                   {idx + 1}
                                 </td>
-                                <td className="px-4 py-3 font-mono text-xs text-gray-900 max-w-xs truncate" title={sample.composition}>
-                                  {sample.composition}
-                                </td>
-                                <td className="px-4 py-3 text-xs text-gray-700 max-w-md truncate" title={sample.processing}>
-                                  {sample.processing || '-'}
+                                <td className="px-4 py-3 font-mono text-xs text-gray-900 max-w-md">
+                                  <div className="whitespace-pre-line" title={sample.sample_text}>
+                                    {sample.sample_text}
+                                  </div>
                                 </td>
                                 {Object.keys(traceData.true_values).map(key => (
                                   <td key={key} className="px-4 py-3 font-semibold text-gray-900">
