@@ -118,6 +118,11 @@ class TaskInfo(BaseModel):
     model_name: Optional[str] = None
     train_ratio: Optional[float] = None
     max_retrieved_samples: Optional[int] = None
+    similarity_threshold: Optional[float] = None
+    random_seed: Optional[int] = None
+    temperature: Optional[float] = None
+    sample_size: Optional[int] = None
+    workers: Optional[int] = None
 
     # 任务备注
     note: Optional[str] = None

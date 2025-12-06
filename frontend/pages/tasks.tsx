@@ -10,8 +10,8 @@ interface Task {
   task_id: string;
   status: string;
   filename: string;
-  composition_column?: string;
-  processing_column?: string;
+  composition_column?: string | string[];
+  processing_column?: string | string[];
   target_columns: string[];
   created_at: string;
   started_at?: string;
@@ -22,6 +22,15 @@ interface Task {
   model_provider?: string;
   model_name?: string;
   note?: string; // 任务备注
+  // 配置字段
+  train_ratio?: number;
+  random_seed?: number;
+  max_retrieved_samples?: number;
+  similarity_threshold?: number;
+  temperature?: number;
+  sample_size?: number;
+  workers?: number;
+  feature_columns?: string[];
 }
 
 export default function TasksPage() {
@@ -42,6 +51,10 @@ export default function TasksPage() {
   const [editingNoteTaskId, setEditingNoteTaskId] = useState<string | null>(null);
   const [editingNoteValue, setEditingNoteValue] = useState<string>('');
 
+  // 取消任务状态
+  const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
   // 如果有 id 参数，加载单个任务详情
   useEffect(() => {
     if (id && typeof id === 'string') {
@@ -60,8 +73,15 @@ export default function TasksPage() {
       if (!response.ok) {
         throw new Error('加载任务详情失败');
       }
-      const task = await response.json();
-      setSelectedTask(task);
+      const data = await response.json();
+      // API 返回的是 { task: {...}, config: {...}, logs: [...] }
+      // 我们需要合并 task 和 config 中的数据
+      const taskWithConfig = {
+        ...data.task,
+        // 如果 config 中有额外的配置信息，也可以合并进来
+        ...(data.config || {})
+      };
+      setSelectedTask(taskWithConfig);
     } catch (err: any) {
       setError(err.message || '加载任务详情失败');
     } finally {
@@ -130,6 +150,14 @@ export default function TasksPage() {
       return;
     }
 
+    // 防止重复点击
+    if (cancellingTaskId === taskId) {
+      return;
+    }
+
+    setCancellingTaskId(taskId);
+    setSuccessMessage(null);
+
     try {
       await cancelTask(taskId);
       loadTasks();
@@ -137,8 +165,14 @@ export default function TasksPage() {
       if (selectedTask?.task_id === taskId) {
         loadTaskDetail(taskId);
       }
+      // 显示成功提示
+      setSuccessMessage('任务已成功取消');
+      // 3秒后自动隐藏提示
+      setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {
       alert(err.message || '停止任务失败');
+    } finally {
+      setCancellingTaskId(null);
     }
   };
 
@@ -296,7 +330,8 @@ export default function TasksPage() {
               <span className="ml-2">{formatDate(selectedTask.completed_at)}</span>
             </div>
           </div>
-          {selectedTask.error && (
+          {/* 只在 failed 状态下显示错误信息，cancelled 状态不显示 */}
+          {selectedTask.status === 'failed' && selectedTask.error && (
             <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded">
               <p className="text-sm font-medium text-red-800">错误信息:</p>
               <p className="text-sm text-red-600 mt-1">{selectedTask.error}</p>
@@ -304,37 +339,117 @@ export default function TasksPage() {
           )}
         </div>
 
-        {/* 配置信息卡片 */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">配置参数</h2>
-          <div className="space-y-3">
-            <div>
-              <span className="text-gray-600">任务ID:</span>
-              <span className="ml-2 font-mono text-sm text-gray-800">{selectedTask.task_id}</span>
+        {/* 配置信息卡片 - 使用醒目的边框和背景 */}
+        <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg shadow-lg border-2 border-blue-200 p-6 mb-6">
+          <div className="flex justify-between items-center mb-4">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">⚙️</span>
+              <h2 className="text-xl font-bold text-gray-800">任务配置参数</h2>
             </div>
-            <div>
-              <span className="text-gray-600">文件名:</span>
-              <span className="ml-2 font-medium">{selectedTask.filename}</span>
+            <button
+              onClick={() => {
+                // 跳转到预测页面，使用 rerun_task_id 参数加载配置
+                router.push(`/prediction?rerun_task_id=${selectedTask.task_id}`);
+              }}
+              className="px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 flex items-center gap-2 shadow-md transition-all hover:shadow-lg"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+              </svg>
+              使用此配置创建新任务
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* 基本信息 */}
+            <div className="space-y-3 bg-gray-50 p-4 rounded-lg">
+              <h3 className="text-sm font-semibold text-blue-700 mb-2 border-b border-blue-200 pb-1">📁 基本信息</h3>
+              <div>
+                <span className="text-gray-500 text-xs">任务ID:</span>
+                <span className="font-mono text-xs text-gray-800 block mt-0.5 truncate" title={selectedTask.task_id}>{selectedTask.task_id}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 text-xs">文件名:</span>
+                <span className="font-medium text-sm block mt-0.5 truncate" title={selectedTask.filename}>{selectedTask.filename}</span>
+              </div>
+              {selectedTask.note && (
+                <div>
+                  <span className="text-gray-500 text-xs">备注:</span>
+                  <span className="font-medium text-sm block mt-0.5">{selectedTask.note}</span>
+                </div>
+              )}
             </div>
-            <div>
-              <span className="text-gray-600">组分列:</span>
-              <span className="ml-2 font-medium">{selectedTask.composition_column || '-'}</span>
+
+            {/* 列配置 */}
+            <div className="space-y-3 bg-gray-50 p-4 rounded-lg">
+              <h3 className="text-sm font-semibold text-green-700 mb-2 border-b border-green-200 pb-1">📊 列配置</h3>
+              <div>
+                <span className="text-gray-500 text-xs">目标列:</span>
+                <span className="font-medium text-sm block mt-0.5">{selectedTask.target_columns?.join(', ') || '-'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 text-xs">成分列:</span>
+                <span className="font-medium text-xs block mt-0.5">
+                  {Array.isArray(selectedTask.composition_column)
+                    ? selectedTask.composition_column.join(', ')
+                    : (selectedTask.composition_column || '-')}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500 text-xs">工艺列:</span>
+                <span className="font-medium text-xs block mt-0.5">
+                  {Array.isArray(selectedTask.processing_column)
+                    ? selectedTask.processing_column.join(', ')
+                    : (selectedTask.processing_column || '-')}
+                </span>
+              </div>
             </div>
-            <div>
-              <span className="text-gray-600">工艺列:</span>
-              <span className="ml-2 font-medium">{selectedTask.processing_column || '-'}</span>
+
+            {/* 模型配置 */}
+            <div className="space-y-3 bg-gray-50 p-4 rounded-lg">
+              <h3 className="text-sm font-semibold text-purple-700 mb-2 border-b border-purple-200 pb-1">🤖 模型配置</h3>
+              <div>
+                <span className="text-gray-500 text-xs">模型提供商:</span>
+                <span className="font-medium text-sm block mt-0.5">{selectedTask.model_provider || '-'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 text-xs">模型名称:</span>
+                <span className="font-medium text-sm block mt-0.5">{selectedTask.model_name || '-'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 text-xs">温度参数:</span>
+                <span className="font-medium text-sm block mt-0.5">{selectedTask.temperature !== undefined ? selectedTask.temperature : '-'}</span>
+              </div>
             </div>
-            <div>
-              <span className="text-gray-600">目标列:</span>
-              <span className="ml-2 font-medium">{selectedTask.target_columns?.join(', ') || '-'}</span>
-            </div>
-            <div>
-              <span className="text-gray-600">模型提供商:</span>
-              <span className="ml-2 font-medium">{selectedTask.model_provider || '-'}</span>
-            </div>
-            <div>
-              <span className="text-gray-600">模型名称:</span>
-              <span className="ml-2 font-medium">{selectedTask.model_name || '-'}</span>
+
+            {/* 数据与执行配置 */}
+            <div className="space-y-3 bg-gray-50 p-4 rounded-lg">
+              <h3 className="text-sm font-semibold text-orange-700 mb-2 border-b border-orange-200 pb-1">⚙️ 执行配置</h3>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <span className="text-gray-500 text-xs">样本数:</span>
+                  <span className="font-medium text-sm block mt-0.5">{selectedTask.sample_size ?? '-'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">训练比例:</span>
+                  <span className="font-medium text-sm block mt-0.5">{selectedTask.train_ratio ?? '-'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">检索数:</span>
+                  <span className="font-medium text-sm block mt-0.5">{selectedTask.max_retrieved_samples ?? '-'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">相似度:</span>
+                  <span className="font-medium text-sm block mt-0.5">{selectedTask.similarity_threshold ?? '-'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">并发数:</span>
+                  <span className="font-medium text-sm block mt-0.5">{selectedTask.workers ?? '-'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">随机种子:</span>
+                  <span className="font-medium text-sm block mt-0.5">{selectedTask.random_seed ?? '-'}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -353,9 +468,14 @@ export default function TasksPage() {
           {(selectedTask.status === 'pending' || selectedTask.status === 'running') && (
             <button
               onClick={() => handleCancel(selectedTask.task_id)}
-              className="px-6 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700"
+              disabled={cancellingTaskId === selectedTask.task_id}
+              className={`px-6 py-3 text-white rounded-lg ${
+                cancellingTaskId === selectedTask.task_id
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-orange-600 hover:bg-orange-700'
+              }`}
             >
-              停止任务
+              {cancellingTaskId === selectedTask.task_id ? '取消中...' : '停止任务'}
             </button>
           )}
           {(selectedTask.status === 'failed' || selectedTask.status === 'cancelled') && (
@@ -393,6 +513,19 @@ export default function TasksPage() {
         <h1 className="text-3xl font-bold mb-2">任务历史</h1>
         <p className="text-gray-600">查看和管理所有预测任务</p>
       </div>
+
+      {/* 成功提示消息 */}
+      {successMessage && (
+        <div className="mb-4 p-4 bg-green-100 border border-green-400 text-green-700 rounded-lg flex items-center justify-between">
+          <span>✓ {successMessage}</span>
+          <button
+            onClick={() => setSuccessMessage(null)}
+            className="text-green-700 hover:text-green-900"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* 筛选器和操作栏 */}
       <div className="mb-6 flex gap-4 items-center flex-wrap">
@@ -500,6 +633,9 @@ export default function TasksPage() {
                   模型
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  配置参数
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                   创建时间
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
@@ -539,7 +675,8 @@ export default function TasksPage() {
                     <div className="text-xs text-gray-500 mt-1">
                       任务ID: {task.task_id}
                     </div>
-                    {task.error && (
+                    {/* 只在 failed 状态下显示错误信息 */}
+                    {task.status === 'failed' && task.error && (
                       <div className="text-xs text-red-600 mt-1">
                         {task.error}
                       </div>
@@ -556,6 +693,52 @@ export default function TasksPage() {
                     </div>
                     <div className="text-xs text-gray-500">
                       {task.model_name || '-'}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="relative group">
+                      <div className="text-xs text-gray-700 cursor-pointer hover:text-blue-600">
+                        <span className="font-medium">{task.sample_size || '-'}</span>
+                        <span className="text-gray-400 mx-1">|</span>
+                        <span>{task.train_ratio || '-'}</span>
+                        <span className="text-gray-400 mx-1">|</span>
+                        <span>{task.workers || '-'}线程</span>
+                      </div>
+                      {/* Tooltip 完整配置 */}
+                      <div className="absolute z-10 invisible group-hover:visible bg-gray-900 text-white text-xs rounded-lg p-3 w-64 left-0 top-full mt-1 shadow-lg">
+                        <div className="font-semibold mb-2 text-blue-300">完整配置参数</div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">样本数量:</span>
+                            <span>{task.sample_size ?? '-'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">训练比例:</span>
+                            <span>{task.train_ratio ?? '-'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">检索样本数:</span>
+                            <span>{task.max_retrieved_samples ?? '-'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">相似度阈值:</span>
+                            <span>{task.similarity_threshold ?? '-'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">温度参数:</span>
+                            <span>{task.temperature ?? '-'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">并发线程:</span>
+                            <span>{task.workers ?? '-'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">随机种子:</span>
+                            <span>{task.random_seed ?? '-'}</span>
+                          </div>
+                        </div>
+                        <div className="absolute -top-1 left-4 w-2 h-2 bg-gray-900 transform rotate-45"></div>
+                      </div>
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -619,9 +802,12 @@ export default function TasksPage() {
                       {(task.status === 'pending' || task.status === 'running') && (
                         <button
                           onClick={() => handleCancel(task.task_id)}
-                          className="text-orange-600 hover:text-orange-900"
+                          disabled={cancellingTaskId === task.task_id}
+                          className={`${cancellingTaskId === task.task_id
+                            ? 'text-gray-400 cursor-not-allowed'
+                            : 'text-orange-600 hover:text-orange-900'}`}
                         >
-                          停止
+                          {cancellingTaskId === task.task_id ? '取消中...' : '停止'}
                         </button>
                       )}
                       {/* 重新预测按钮：创建新任务，从头开始预测 */}

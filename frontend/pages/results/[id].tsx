@@ -5,26 +5,47 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
 import dynamic from 'next/dynamic';
-import { getResults, getParetoAnalysis, triggerDownload, getTaskStatus } from '@/lib/api';
+import { getResults, getParetoAnalysis, triggerDownload, getTaskStatus, getTaskList } from '@/lib/api';
 import PredictionTraceModal from '@/components/PredictionTraceModal';
+
+// 图表加载占位组件
+const ChartLoading = ({ height = 'h-80' }: { height?: string }) => (
+  <div className={`${height} flex items-center justify-center bg-gray-50 rounded-lg`}>
+    <div className="flex flex-col items-center gap-2">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+      <span className="text-gray-500 text-sm">加载图表...</span>
+    </div>
+  </div>
+);
 
 // 动态导入图表组件（避免 SSR 问题）
 const ParetoFrontChart = dynamic(
   () => import('@/components/charts/ParetoFrontChart'),
-  { ssr: false, loading: () => <div className="h-96 flex items-center justify-center">加载图表...</div> }
+  { ssr: false, loading: () => <ChartLoading height="h-96" /> }
 );
 const PredictionComparisonChart = dynamic(
   () => import('@/components/charts/PredictionComparisonChart'),
-  { ssr: false, loading: () => <div className="h-80 flex items-center justify-center">加载图表...</div> }
+  { ssr: false, loading: () => <ChartLoading height="h-80" /> }
 );
 const ErrorDistributionChart = dynamic(
   () => import('@/components/charts/ErrorDistributionChart'),
-  { ssr: false, loading: () => <div className="h-64 flex items-center justify-center">加载图表...</div> }
+  { ssr: false, loading: () => <ChartLoading height="h-64" /> }
 );
 const PredictionScatterChart = dynamic(
   () => import('@/components/charts/PredictionScatterChart'),
-  { ssr: false, loading: () => <div className="h-96 flex items-center justify-center">加载图表...</div> }
+  { ssr: false, loading: () => <ChartLoading height="h-96" /> }
 );
+
+// 预加载图表组件（在页面加载后预先下载 JS）
+const preloadCharts = () => {
+  // 延迟预加载，不阻塞主要内容
+  setTimeout(() => {
+    import('@/components/charts/ParetoFrontChart');
+    import('@/components/charts/PredictionComparisonChart');
+    import('@/components/charts/ErrorDistributionChart');
+    import('@/components/charts/PredictionScatterChart');
+  }, 1000);
+};
 
 export default function ResultsPage() {
   const router = useRouter();
@@ -45,6 +66,11 @@ export default function ResultsPage() {
   const [pageSize, setPageSize] = useState(50);
   const [taskConfig, setTaskConfig] = useState<any>(null);
 
+  // 任务切换相关状态
+  const [completedTasks, setCompletedTasks] = useState<any[]>([]);
+  const [showTaskSelector, setShowTaskSelector] = useState(false);
+  const taskSelectorRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (id) {
       checkTaskStatusAndLoadResults(id as string);
@@ -58,6 +84,31 @@ export default function ResultsPage() {
       }
     };
   }, [id]);
+
+  // 加载已完成任务列表（用于任务切换）
+  useEffect(() => {
+    loadCompletedTasks();
+
+    // 点击外部关闭下拉菜单
+    const handleClickOutside = (event: MouseEvent) => {
+      if (taskSelectorRef.current && !taskSelectorRef.current.contains(event.target as Node)) {
+        setShowTaskSelector(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const loadCompletedTasks = async () => {
+    try {
+      const response = await getTaskList({ status: 'completed', page_size: 50, sort_by: 'created_at', sort_order: 'desc' });
+      if (response?.tasks) {
+        setCompletedTasks(response.tasks);
+      }
+    } catch (err) {
+      console.warn('Failed to load completed tasks:', err);
+    }
+  };
 
   const checkTaskStatusAndLoadResults = async (resultId: string) => {
     try {
@@ -100,19 +151,53 @@ export default function ResultsPage() {
       setLoading(true);
       setError(null);
 
-      // 加载预测结果
-      const resultsData = await getResults(resultId);
+      // 并行加载所有数据（优化加载速度）
+      const [processDetailsResponse, resultsData, paretoData] = await Promise.all([
+        fetch(`http://localhost:8000/api/results/${resultId}/process_details.json`),
+        getResults(resultId),
+        getParetoAnalysis(resultId).catch(() => null), // Pareto 可能不存在，忽略错误
+      ]);
+
+      // 处理 process_details
+      if (!processDetailsResponse.ok) {
+        throw new Error('无法加载预测详情数据');
+      }
+      const processDetails = await processDetailsResponse.json();
+
+      // 从 process_details 构建预测结果数据
+      const predictions = processDetails.map((detail: any) => {
+        const row: any = {
+          sample_index: detail.sample_index,
+          ID: detail.ID,
+          predicted_at: detail.predicted_at || null,
+        };
+        // 添加真实值和预测值
+        if (detail.true_values) {
+          Object.entries(detail.true_values).forEach(([key, value]) => {
+            row[key] = value;
+          });
+        }
+        if (detail.predicted_values) {
+          Object.entries(detail.predicted_values).forEach(([key, value]) => {
+            row[`${key}_predicted`] = value;
+          });
+        }
+        return row;
+      });
+
+      // 使用 process_details 构建的 predictions 替换原有的
+      resultsData.predictions = predictions;
       setResults(resultsData);
 
-      // 加载 Pareto 分析
-      try {
-        const paretoData = await getParetoAnalysis(resultId);
+      // 设置 Pareto 分析（如果存在）
+      if (paretoData) {
         setParetoAnalysis(paretoData);
-      } catch (err) {
-        console.warn('Pareto analysis not available:', err);
       }
 
       setLoading(false);
+
+      // 数据加载完成后，预加载图表组件
+      preloadCharts();
     } catch (err: any) {
       setError(err.message || '加载结果失败');
       setLoading(false);
@@ -227,6 +312,31 @@ export default function ResultsPage() {
     // 将配置保存到 localStorage，然后跳转到预测页面
     localStorage.setItem('predictionConfig', JSON.stringify(configForEdit));
     router.push('/prediction?from=edit');
+  };
+
+  // 切换到其他任务
+  const handleSwitchTask = (taskId: string) => {
+    if (taskId !== id) {
+      setShowTaskSelector(false);
+      // 使用 router.push 保持当前 Tab 状态（通过 shallow routing）
+      router.push(`/results/${taskId}`, undefined, { shallow: false });
+    }
+  };
+
+  // 获取当前任务在列表中的索引
+  const currentTaskIndex = completedTasks.findIndex(t => t.task_id === id);
+
+  // 上一个/下一个任务
+  const handlePrevTask = () => {
+    if (currentTaskIndex > 0) {
+      handleSwitchTask(completedTasks[currentTaskIndex - 1].task_id);
+    }
+  };
+
+  const handleNextTask = () => {
+    if (currentTaskIndex < completedTasks.length - 1) {
+      handleSwitchTask(completedTasks[currentTaskIndex + 1].task_id);
+    }
   };
 
   // 导出报告
@@ -396,12 +506,110 @@ export default function ResultsPage() {
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow">
         <div className="max-w-7xl mx-auto py-6 px-4">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-start">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">预测结果</h1>
               <p className="text-gray-600 mt-2">结果 ID: {id}</p>
               {taskConfig?.note && (
                 <p className="text-gray-600 mt-1">📝 备注: {taskConfig.note}</p>
+              )}
+
+              {/* 任务切换器 - 移到标题下方 */}
+              {completedTasks.length > 1 && (
+                <div className="mt-4 flex items-center gap-3 bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-2.5 rounded-lg border border-blue-200 shadow-sm">
+                  <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">切换任务</span>
+
+                  {/* 上一个按钮 */}
+                  <button
+                    onClick={handlePrevTask}
+                    disabled={currentTaskIndex <= 0}
+                    className="flex items-center justify-center w-8 h-8 rounded-md bg-white border border-blue-300 hover:bg-blue-100 hover:border-blue-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:border-blue-300 transition-all shadow-sm"
+                    title="上一个任务"
+                  >
+                    <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+
+                  {/* 任务选择下拉菜单 */}
+                  <div className="relative" ref={taskSelectorRef}>
+                    <button
+                      onClick={() => setShowTaskSelector(!showTaskSelector)}
+                      className="flex items-center gap-3 px-4 py-2 bg-white border-2 border-blue-300 hover:border-blue-400 hover:shadow-md rounded-lg transition-all min-w-[240px] group"
+                    >
+                      <div className="flex items-center gap-2 flex-1">
+                        <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                        </svg>
+                        <span className="text-sm font-medium text-gray-700 truncate">
+                          {currentTaskIndex >= 0 ? `第 ${currentTaskIndex + 1} 个任务，共 ${completedTasks.length} 个` : '选择任务'}
+                        </span>
+                      </div>
+                      <svg className={`w-4 h-4 text-blue-600 transition-transform ${showTaskSelector ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+
+                    {showTaskSelector && (
+                      <div className="absolute top-full left-0 mt-2 w-96 max-h-96 overflow-y-auto bg-white border-2 border-blue-200 rounded-xl shadow-2xl z-50">
+                        <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-3 font-semibold text-sm">
+                          选择要查看的任务
+                        </div>
+                        {completedTasks.map((task, idx) => (
+                          <button
+                            key={task.task_id}
+                            onClick={() => handleSwitchTask(task.task_id)}
+                            className={`w-full px-4 py-3 text-left hover:bg-blue-50 border-b last:border-b-0 transition-all ${
+                              task.task_id === id ? 'bg-blue-100 border-l-4 border-l-blue-600' : 'border-l-4 border-l-transparent'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1.5">
+                              <div className="flex items-center gap-2">
+                                <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
+                                  task.task_id === id ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'
+                                }`}>
+                                  {idx + 1}
+                                </span>
+                                {task.task_id === id && (
+                                  <span className="text-xs font-semibold text-blue-600 bg-blue-100 px-2 py-0.5 rounded">当前</span>
+                                )}
+                              </div>
+                              <span className="text-xs text-gray-500 flex items-center gap-1">
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                {new Date(task.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                            <div className="text-sm text-gray-800 font-medium truncate">
+                              {task.note || `任务 ${task.task_id.substring(0, 8)}...`}
+                            </div>
+                            {task.filename && (
+                              <div className="text-xs text-gray-500 truncate mt-1 flex items-center gap-1">
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                {task.filename}
+                              </div>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 下一个按钮 */}
+                  <button
+                    onClick={handleNextTask}
+                    disabled={currentTaskIndex >= completedTasks.length - 1}
+                    className="flex items-center justify-center w-8 h-8 rounded-md bg-white border border-blue-300 hover:bg-blue-100 hover:border-blue-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:border-blue-300 transition-all shadow-sm"
+                    title="下一个任务"
+                  >
+                    <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
               )}
             </div>
             <div className="flex space-x-2">
@@ -454,6 +662,79 @@ export default function ResultsPage() {
       </header>
 
       <main className="max-w-7xl mx-auto py-8 px-4">
+        {/* 配置信息卡片 - 可展开/折叠 */}
+        {taskConfig && (
+          <details className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg shadow-lg border-2 border-blue-200 mb-6 group">
+            <summary className="px-6 py-4 cursor-pointer flex items-center justify-between hover:bg-blue-100/50 rounded-t-lg transition-colors">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">⚙️</span>
+                <h2 className="text-lg font-bold text-gray-800">任务配置参数</h2>
+                <span className="text-sm text-gray-500 ml-2">
+                  ({taskConfig.request_data?.config?.model_provider || '-'} / {taskConfig.request_data?.config?.model_name || '-'})
+                </span>
+              </div>
+              <span className="text-gray-500 group-open:rotate-180 transition-transform">▼</span>
+            </summary>
+            <div className="px-6 pb-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+                {/* 基本信息 */}
+                <div className="space-y-2 bg-white/70 p-4 rounded-lg border border-blue-100">
+                  <h3 className="text-sm font-semibold text-blue-700 border-b border-blue-200 pb-1">📁 基本信息</h3>
+                  <div className="text-xs">
+                    <span className="text-gray-500">文件名:</span>
+                    <span className="ml-1 font-medium truncate block" title={taskConfig.request_data?.filename}>{taskConfig.request_data?.filename || '-'}</span>
+                  </div>
+                  {taskConfig.note && (
+                    <div className="text-xs">
+                      <span className="text-gray-500">备注:</span>
+                      <span className="ml-1 font-medium">{taskConfig.note}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 列配置 */}
+                <div className="space-y-2 bg-white/70 p-4 rounded-lg border border-green-100">
+                  <h3 className="text-sm font-semibold text-green-700 border-b border-green-200 pb-1">📊 列配置</h3>
+                  <div className="text-xs">
+                    <span className="text-gray-500">目标列:</span>
+                    <span className="ml-1 font-medium">{taskConfig.request_data?.config?.target_columns?.join(', ') || '-'}</span>
+                  </div>
+                  <div className="text-xs">
+                    <span className="text-gray-500">成分列数量:</span>
+                    <span className="ml-1 font-medium">{taskConfig.request_data?.config?.composition_column?.length || 0}</span>
+                  </div>
+                </div>
+
+                {/* 模型配置 */}
+                <div className="space-y-2 bg-white/70 p-4 rounded-lg border border-purple-100">
+                  <h3 className="text-sm font-semibold text-purple-700 border-b border-purple-200 pb-1">🤖 模型配置</h3>
+                  <div className="text-xs">
+                    <span className="text-gray-500">模型:</span>
+                    <span className="ml-1 font-medium">{taskConfig.request_data?.config?.model_provider || '-'} / {taskConfig.request_data?.config?.model_name || '-'}</span>
+                  </div>
+                  <div className="text-xs">
+                    <span className="text-gray-500">温度:</span>
+                    <span className="ml-1 font-medium">{taskConfig.request_data?.config?.temperature ?? '-'}</span>
+                  </div>
+                </div>
+
+                {/* 执行配置 */}
+                <div className="space-y-2 bg-white/70 p-4 rounded-lg border border-orange-100">
+                  <h3 className="text-sm font-semibold text-orange-700 border-b border-orange-200 pb-1">⚙️ 执行配置</h3>
+                  <div className="grid grid-cols-2 gap-1 text-xs">
+                    <div><span className="text-gray-500">样本数:</span> <span className="font-medium">{taskConfig.request_data?.config?.sample_size ?? '-'}</span></div>
+                    <div><span className="text-gray-500">训练比例:</span> <span className="font-medium">{taskConfig.request_data?.config?.train_ratio ?? '-'}</span></div>
+                    <div><span className="text-gray-500">检索数:</span> <span className="font-medium">{taskConfig.request_data?.config?.max_retrieved_samples ?? '-'}</span></div>
+                    <div><span className="text-gray-500">相似度:</span> <span className="font-medium">{taskConfig.request_data?.config?.similarity_threshold ?? '-'}</span></div>
+                    <div><span className="text-gray-500">并发数:</span> <span className="font-medium">{taskConfig.request_data?.config?.workers ?? '-'}</span></div>
+                    <div><span className="text-gray-500">种子:</span> <span className="font-medium">{taskConfig.request_data?.config?.random_seed ?? '-'}</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+        )}
+
         {/* 标签页导航 */}
         <div className="bg-white rounded-lg shadow mb-6">
           <div className="border-b border-gray-200">
@@ -575,6 +856,9 @@ export default function ResultsPage() {
                           </React.Fragment>
                         ))}
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                          生成时间
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                           操作
                         </th>
                       </tr>
@@ -615,6 +899,21 @@ export default function ResultsPage() {
                               </React.Fragment>
                             );
                           })}
+                          <td className="px-4 py-3 text-sm text-gray-500">
+                            {row.predicted_at ? (
+                              <span title={row.predicted_at}>
+                                {new Date(row.predicted_at).toLocaleString('zh-CN', {
+                                  month: '2-digit',
+                                  day: '2-digit',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  second: '2-digit'
+                                })}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-sm">
                             <button
                               onClick={(e) => {

@@ -46,6 +46,7 @@ const statusConfig: Record<string, { icon: string; color: string; bgColor: strin
   running: { icon: '🔵', color: 'text-blue-600', bgColor: 'bg-blue-100', label: '运行中' },
   completed: { icon: '🟢', color: 'text-green-600', bgColor: 'bg-green-100', label: '已完成' },
   failed: { icon: '🔴', color: 'text-red-600', bgColor: 'bg-red-100', label: '失败' },
+  cancelled: { icon: '🚫', color: 'text-orange-600', bgColor: 'bg-orange-100', label: '已取消' },
 };
 
 export default function TaskSidebar({ isOpen, onClose, currentTaskId }: TaskSidebarProps) {
@@ -53,6 +54,7 @@ export default function TaskSidebar({ isOpen, onClose, currentTaskId }: TaskSide
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
 
   // 加载任务列表
   const loadTasks = useCallback(async () => {
@@ -86,12 +88,17 @@ export default function TaskSidebar({ isOpen, onClose, currentTaskId }: TaskSide
   // 处理取消任务
   const handleCancel = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (cancellingTaskId === taskId) return; // 防止重复点击
+
     if (confirm('确定要取消这个任务吗？')) {
+      setCancellingTaskId(taskId);
       try {
         await cancelTask(taskId);
         loadTasks();
       } catch (err: any) {
         alert(err.message || '取消失败');
+      } finally {
+        setCancellingTaskId(null);
       }
     }
   };
@@ -196,14 +203,19 @@ export default function TaskSidebar({ isOpen, onClose, currentTaskId }: TaskSide
                     )}
                   </div>
 
-                  {/* 操作按钮 */}
-                  {task.status === 'running' && (
+                  {/* 操作按钮：pending 和 running 状态都可取消 */}
+                  {(task.status === 'running' || task.status === 'pending') && (
                     <button
                       onClick={(e) => handleCancel(task.task_id, e)}
-                      className="p-1 hover:bg-red-100 rounded text-red-500 text-xs"
+                      disabled={cancellingTaskId === task.task_id}
+                      className={`p-1 rounded text-xs ${
+                        cancellingTaskId === task.task_id
+                          ? 'text-gray-400 cursor-not-allowed'
+                          : 'hover:bg-red-100 text-red-500'
+                      }`}
                       title="取消任务"
                     >
-                      ✕
+                      {cancellingTaskId === task.task_id ? '...' : '✕'}
                     </button>
                   )}
                 </div>

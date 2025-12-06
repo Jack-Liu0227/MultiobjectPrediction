@@ -261,6 +261,25 @@ class RAGPredictionService:
 
             logger.info(f"Task {task_id}: Prediction completed")
 
+            # 检查是否有预测结果（任务取消前可能没有完成任何预测）
+            has_predictions = len(prediction_details) > 0
+
+            if not has_predictions:
+                # 没有任何预测结果，检查是否被取消
+                current_task = self.task_manager.get_task(task_id)
+                if current_task and current_task.get('status') == 'cancelled':
+                    logger.info(f"Task {task_id}: Task cancelled before any predictions completed")
+                    self.task_manager.update_task_status(
+                        task_id=task_id,
+                        status=TaskStatus.CANCELLED,
+                        progress=0.0,
+                        message="任务已取消（未完成任何预测）"
+                    )
+                    return
+                else:
+                    # 非取消情况下没有结果，这是异常
+                    raise ValueError("预测完成但没有生成任何结果")
+
             # 5. 保存结果
             self.task_manager.update_task_status(
                 task_id=task_id,
@@ -653,13 +672,18 @@ class RAGPredictionService:
             column_name_mapping = config.prompt_template["column_name_mapping"]
         sample_text = self._apply_column_name_mapping(sample_text, column_name_mapping)
 
+        # 记录预测完成时间
+        from datetime import datetime
+        predicted_at = datetime.now().isoformat()
+
         result_dict = {
             'sample_index': int(test_idx),
             'sample_text': sample_text,  # 统一的样本文本（已应用列名映射）
             'predictions': result['predictions'],
             'prompt': result.get('prompt', ''),
             'llm_response': result.get('llm_response', ''),
-            'similar_samples': similar_samples
+            'similar_samples': similar_samples,
+            'predicted_at': predicted_at  # 预测生成时间戳
         }
 
         # 添加 ID 字段（原始数据集中的行号）
@@ -866,6 +890,7 @@ class RAGPredictionService:
                 except Exception as e:
                     logger.error(f"Task {task_id}: Error predicting sample {test_idx}: {e}")
                     # 创建失败结果
+                    from datetime import datetime
                     test_row = sampled_test_df.loc[test_idx]
                     error_result = {
                         'sample_index': int(test_idx),
@@ -874,7 +899,8 @@ class RAGPredictionService:
                         'predictions': {col: None for col in config.target_columns},
                         'prompt': '',
                         'llm_response': f'Error: {str(e)}',
-                        'similar_samples': []
+                        'similar_samples': [],
+                        'predicted_at': datetime.now().isoformat()  # 错误发生时间
                     }
 
                     # 添加 ID 字段（如果存在）
@@ -931,7 +957,8 @@ class RAGPredictionService:
                 'prompt': result['prompt'],
                 'llm_response': result['llm_response'],
                 'similar_samples': result['similar_samples'],
-                'used_default_values': used_default_values  # 记录使用默认值的目标属性
+                'used_default_values': used_default_values,  # 记录使用默认值的目标属性
+                'predicted_at': result.get('predicted_at')  # 预测生成时间戳
             }
 
             # 添加 ID 字段（如果存在）
@@ -1000,6 +1027,12 @@ class RAGPredictionService:
         for target_col, result_df in results.items():
             pred_col = f"{target_col}_predicted"
             if pred_col in result_df.columns:
+                # 检查长度匹配
+                if len(result_df) != len(final_df):
+                    raise ValueError(
+                        f"预测结果长度不匹配：{pred_col} 有 {len(result_df)} 行，"
+                        f"但测试集有 {len(final_df)} 行。可能是任务在预测过程中被取消导致。"
+                    )
                 final_df[pred_col] = result_df[pred_col].values
 
         # 2) 如为增量模式，与历史结果合并

@@ -440,6 +440,13 @@ class TaskManager:
             task_info["error"] = "用户取消"
 
             self._save_task(task_id, task_info)
+
+            # 同步更新数据库
+            self.db.update_task(task_id, {
+                "status": "cancelled",
+                "error": "用户取消"
+            })
+
             return True
 
     def create_task_from_config(self, config: Dict[str, Any]) -> str:
@@ -507,6 +514,12 @@ class TaskManager:
             "model_name": config.get("model_name"),
             "train_ratio": config.get("train_ratio"),
             "max_retrieved_samples": config.get("max_retrieved_samples"),
+            "similarity_threshold": config.get("similarity_threshold"),
+            "random_seed": config.get("random_seed"),
+            "temperature": config.get("temperature"),
+            "sample_size": config.get("sample_size"),
+            "workers": config.get("workers"),
+            "note": request_data.get("note"),
             "process_details": task_info.get("process_details"),  # 添加预测过程详情
         }
 

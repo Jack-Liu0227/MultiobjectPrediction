@@ -103,7 +103,7 @@ class TaskDatabase:
             # 根据状态更新时间戳
             if updates.get("status") == "running" and not task.started_at:
                 task.started_at = datetime.now()
-            elif updates.get("status") in ["completed", "failed"]:
+            elif updates.get("status") in ["completed", "failed", "cancelled"]:
                 task.completed_at = datetime.now()
             
             db.commit()
@@ -180,6 +180,11 @@ class TaskDatabase:
             # 安全处理 process_details（应该是对象或数组）
             process_details = self._safe_json_field(task.process_details, default=None)
 
+            # 从 config_json 中读取额外配置
+            config_json = task.config_json if isinstance(task.config_json, dict) else {}
+            random_seed = config_json.get('random_seed')
+            workers = config_json.get('workers')
+
             return {
                 "task_id": task.task_id,
                 "status": task.status,
@@ -198,6 +203,11 @@ class TaskDatabase:
                 "model_name": task.model_name,
                 "train_ratio": task.train_ratio,
                 "max_retrieved_samples": task.max_retrieved_samples,
+                "similarity_threshold": task.similarity_threshold,
+                "random_seed": random_seed,
+                "temperature": task.temperature,
+                "sample_size": task.sample_size,
+                "workers": workers,
                 "note": task.note,
                 "process_details": process_details,
             }
@@ -222,6 +232,11 @@ class TaskDatabase:
                 "model_name": task.model_name,
                 "train_ratio": task.train_ratio,
                 "max_retrieved_samples": task.max_retrieved_samples,
+                "similarity_threshold": task.similarity_threshold,
+                "random_seed": None,
+                "temperature": task.temperature,
+                "sample_size": task.sample_size,
+                "workers": None,
                 "note": task.note,
                 "process_details": None,
             }
