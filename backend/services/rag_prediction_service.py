@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import logging
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
@@ -22,6 +23,37 @@ from services.sample_text_builder import SampleTextBuilder
 from config import RESULTS_DIR
 
 logger = logging.getLogger(__name__)
+
+
+def safe_write_file(file_path: Path, content: str, max_retries: int = 3, retry_delay: float = 0.3) -> bool:
+    """
+    安全写入文件（带重试机制）
+
+    Args:
+        file_path: 文件路径
+        content: 文件内容
+        max_retries: 最大重试次数
+        retry_delay: 重试延迟（秒）
+
+    Returns:
+        是否成功写入
+    """
+    for attempt in range(max_retries):
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return True
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"文件写入失败，重试 (尝试 {attempt + 1}/{max_retries}): {file_path}")
+                time.sleep(retry_delay)
+            else:
+                logger.error(f"❌ 文件权限错误: {e} - {file_path}")
+                return False
+        except Exception as e:
+            logger.error(f"文件写入失败: {e} - {file_path}")
+            return False
+    return False
 
 
 class RAGPredictionService:
@@ -39,6 +71,7 @@ class RAGPredictionService:
         """
         self.task_manager = task_manager
         self.rag_engine = None
+        self.results_dir = RESULTS_DIR  # 添加 results_dir 属性
 
     def _apply_column_name_mapping(self, text: str, column_name_mapping: Optional[Dict[str, str]] = None) -> str:
         """
@@ -341,8 +374,9 @@ class RAGPredictionService:
             except Exception as e:
                 logger.warning(f"合并 process_details 失败，使用本次结果: {e}")
 
-            with open(process_details_file, 'w', encoding='utf-8') as f:
-                json.dump(final_prediction_details, f, ensure_ascii=False, indent=2)
+            # 使用安全写入保存 process_details
+            process_details_json = json.dumps(final_prediction_details, ensure_ascii=False, indent=2)
+            safe_write_file(process_details_file, process_details_json)
 
             # 6.1 为每个样本创建独立的 prompt 和 response 文件
             # 使用唯一标识符（组分+工艺的哈希值）来命名文件，避免增量预测时的冲突
@@ -353,6 +387,7 @@ class RAGPredictionService:
 
             import hashlib
             saved_count = 0
+            failed_count = 0
             for detail in prediction_details:
                 # 使用组分+工艺生成唯一标识符
                 sample_key = f"{detail.get('composition', '')}|{detail.get('processing', '')}"
@@ -362,21 +397,24 @@ class RAGPredictionService:
                 # 文件名格式：sample_{index}_{hash}.txt
                 file_suffix = f"{sample_idx}_{sample_hash}"
 
-                # 始终保存 prompt（输入）
+                # 始终保存 prompt（输入）- 使用安全写入
                 prompt_file = inputs_dir / f"sample_{file_suffix}.txt"
-                with open(prompt_file, 'w', encoding='utf-8') as f:
-                    f.write(detail.get('prompt', ''))
+                if not safe_write_file(prompt_file, detail.get('prompt', '')):
+                    failed_count += 1
 
                 # 只有预测成功时才保存 LLM response（输出）
                 llm_response = detail.get('llm_response', '')
                 if llm_response and not llm_response.startswith('Error:'):
                     response_file = outputs_dir / f"sample_{file_suffix}.txt"
-                    with open(response_file, 'w', encoding='utf-8') as f:
-                        f.write(llm_response)
-                    saved_count += 1
+                    if safe_write_file(response_file, llm_response):
+                        saved_count += 1
+                    else:
+                        failed_count += 1
                 else:
                     logger.debug(f"跳过保存失败样本的输出文件: sample_{file_suffix}.txt")
 
+            if failed_count > 0:
+                logger.warning(f"Task {task_id}: {failed_count} 个文件写入失败")
             logger.info(f"Task {task_id}: Saved {len(prediction_details)} prompts to inputs/ and {saved_count} successful responses to outputs/")
 
             # 更新任务的 process_details 字段（使用合并后的结果）
@@ -1114,8 +1152,8 @@ class RAGPredictionService:
         metrics = self._calculate_metrics(save_df, config.target_columns)
         import json
         metrics_file = task_results_dir / "metrics.json"
-        with open(metrics_file, 'w', encoding='utf-8') as f:
-            json.dump(metrics, f, ensure_ascii=False, indent=2)
+        metrics_json = json.dumps(metrics, ensure_ascii=False, indent=2)
+        safe_write_file(metrics_file, metrics_json)
 
         return task_results_dir.name
 

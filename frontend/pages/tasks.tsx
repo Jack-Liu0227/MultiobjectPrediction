@@ -6,6 +6,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { getTaskList, deleteTask, rerunTask, cancelTask } from '../lib/api';
 import { taskEvents } from '../lib/taskEvents';
+import ExportButton from '@/components/ExportButton';
+import { exportToCSV, exportToExcel, exportToHTML, generateFileName } from '@/lib/exportUtils';
 
 interface Task {
   task_id: string;
@@ -721,6 +723,79 @@ export default function TasksPage() {
         >
           刷新
         </button>
+
+        {tasks.length > 0 && (
+          <ExportButton
+            label="导出任务列表"
+            options={[
+              {
+                label: '导出为 CSV',
+                format: 'csv',
+                onClick: () => {
+                  const exportData = tasks.map(task => ({
+                    任务ID: task.task_id,
+                    状态: task.status,
+                    文件名: task.filename,
+                    备注: task.note || '-',
+                    目标列: task.target_columns.join(', '),
+                    模型: task.model_name || '-',
+                    创建时间: formatDate(task.created_at),
+                    完成时间: formatDate(task.completed_at),
+                    进度: task.progress !== undefined ? `${Math.round(task.progress * 100)}%` : '-',
+                  }));
+                  exportToCSV(
+                    exportData,
+                    generateFileName('task_history', 'csv')
+                  );
+                },
+              },
+              {
+                label: '导出为 Excel',
+                format: 'excel',
+                onClick: () => {
+                  const exportData = tasks.map(task => ({
+                    任务ID: task.task_id,
+                    状态: task.status,
+                    文件名: task.filename,
+                    备注: task.note || '-',
+                    目标列: task.target_columns.join(', '),
+                    模型: task.model_name || '-',
+                    创建时间: formatDate(task.created_at),
+                    完成时间: formatDate(task.completed_at),
+                    进度: task.progress !== undefined ? `${Math.round(task.progress * 100)}%` : '-',
+                  }));
+                  exportToExcel(
+                    exportData,
+                    generateFileName('task_history', 'xlsx'),
+                    '任务历史'
+                  );
+                },
+              },
+              {
+                label: '导出为 HTML',
+                format: 'html',
+                onClick: () => {
+                  const exportData = tasks.map(task => ({
+                    任务ID: task.task_id,
+                    状态: task.status,
+                    文件名: task.filename,
+                    备注: task.note || '-',
+                    目标列: task.target_columns.join(', '),
+                    模型: task.model_name || '-',
+                    创建时间: formatDate(task.created_at),
+                    完成时间: formatDate(task.completed_at),
+                    进度: task.progress !== undefined ? `${Math.round(task.progress * 100)}%` : '-',
+                  }));
+                  exportToHTML(
+                    exportData,
+                    generateFileName('task_history', 'html'),
+                    '任务历史列表'
+                  );
+                },
+              },
+            ]}
+          />
+        )}
 
         {selectedTaskIds.size > 0 && (
           <>

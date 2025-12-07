@@ -4,6 +4,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import ExportButton from './ExportButton';
+import { exportToCSV, exportToExcel, exportToHTML, exportToPNG, generateFileName } from '@/lib/exportUtils';
 
 interface PredictionTraceModalProps {
   isOpen: boolean;
@@ -347,16 +349,104 @@ export default function PredictionTraceModal({
                 {activeSection === 'rag' && (
                   <div className="space-y-4">
                     <div className="flex justify-between items-center">
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        🔎 RAG 检索到的相似样本
-                      </h3>
-                      <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium">
-                        共 {traceData.similar_samples?.length || 0} 个
-                      </span>
+                      <div className="flex items-center gap-3">
+                        <h3 className="text-lg font-semibold text-gray-900">
+                          🔎 RAG 检索到的相似样本
+                        </h3>
+                        <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium">
+                          共 {traceData.similar_samples?.length || 0} 个
+                        </span>
+                      </div>
+                      {traceData.similar_samples && traceData.similar_samples.length > 0 && (
+                        <ExportButton
+                          label="导出相似样本"
+                          options={[
+                            {
+                              label: '导出为 CSV',
+                              format: 'csv',
+                              onClick: () => {
+                                const targetKeys = Object.keys(traceData.true_values);
+                                const exportData = traceData.similar_samples.map((sample: any, idx: number) => {
+                                  const row: any = {
+                                    序号: idx + 1,
+                                    样本描述: sample.sample_text,
+                                  };
+                                  targetKeys.forEach(key => {
+                                    row[key] = typeof sample[key] === 'number' ? sample[key].toFixed(3) : (sample[key] || '-');
+                                  });
+                                  return row;
+                                });
+                                exportToCSV(
+                                  exportData,
+                                  generateFileName(`similar_samples_sample_${sampleIndex}`, 'csv')
+                                );
+                              },
+                            },
+                            {
+                              label: '导出为 Excel',
+                              format: 'excel',
+                              onClick: () => {
+                                const targetKeys = Object.keys(traceData.true_values);
+                                const exportData = traceData.similar_samples.map((sample: any, idx: number) => {
+                                  const row: any = {
+                                    序号: idx + 1,
+                                    样本描述: sample.sample_text,
+                                  };
+                                  targetKeys.forEach(key => {
+                                    row[key] = typeof sample[key] === 'number' ? sample[key].toFixed(3) : (sample[key] || '-');
+                                  });
+                                  return row;
+                                });
+                                exportToExcel(
+                                  exportData,
+                                  generateFileName(`similar_samples_sample_${sampleIndex}`, 'xlsx'),
+                                  '相似样本'
+                                );
+                              },
+                            },
+                            {
+                              label: '导出为 HTML',
+                              format: 'html',
+                              onClick: () => {
+                                const targetKeys = Object.keys(traceData.true_values);
+                                const exportData = traceData.similar_samples.map((sample: any, idx: number) => {
+                                  const row: any = {
+                                    序号: idx + 1,
+                                    样本描述: sample.sample_text,
+                                  };
+                                  targetKeys.forEach(key => {
+                                    row[key] = typeof sample[key] === 'number' ? sample[key].toFixed(3) : (sample[key] || '-');
+                                  });
+                                  return row;
+                                });
+                                exportToHTML(
+                                  exportData,
+                                  generateFileName(`similar_samples_sample_${sampleIndex}`, 'html'),
+                                  `相似样本 - 样本 #${sampleIndex + 1}`
+                                );
+                              },
+                            },
+                            {
+                              label: '导出表格图片 (PNG)',
+                              format: 'png',
+                              onClick: async () => {
+                                const tableElement = document.querySelector('[data-table-type="similar-samples"]') as HTMLElement;
+                                if (tableElement) {
+                                  await exportToPNG(
+                                    tableElement,
+                                    generateFileName(`similar_samples_table_sample_${sampleIndex}`, 'png'),
+                                    { scale: 1.5 }
+                                  );
+                                }
+                              },
+                            },
+                          ]}
+                        />
+                      )}
                     </div>
 
                     {traceData.similar_samples && traceData.similar_samples.length > 0 ? (
-                      <div className="overflow-x-auto bg-white rounded-lg border border-gray-200">
+                      <div className="overflow-x-auto bg-white rounded-lg border border-gray-200" data-table-type="similar-samples">
                         <table className="w-full text-sm">
                           <thead className="bg-gradient-to-r from-blue-50 to-indigo-50">
                             <tr>

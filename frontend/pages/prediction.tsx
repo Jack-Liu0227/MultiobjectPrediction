@@ -492,6 +492,7 @@ export default function PredictionPage() {
                     compositionColumns: [],
                     processingColumn: [],
                     targetColumns: [],
+                    featureColumns: [],
                     maxRetrievedSamples: 50,
                     similarityThreshold: 0.3,
                     trainRatio: 0.8,
@@ -900,12 +901,15 @@ export default function PredictionPage() {
         };
 
         const toggleFeatureColumn = (col: string) => {
-          setSettings(prev => ({
-            ...prev,
-            featureColumns: prev.featureColumns.includes(col)
-              ? prev.featureColumns.filter(c => c !== col)
-              : [...prev.featureColumns, col]
-          }));
+          setSettings(prev => {
+            const currentFeatures = prev.featureColumns || [];
+            return {
+              ...prev,
+              featureColumns: currentFeatures.includes(col)
+                ? currentFeatures.filter(c => c !== col)
+                : [...currentFeatures, col]
+            };
+          });
         };
 
         const availableFeatureCols = getAvailableFeatureColumns();
@@ -950,7 +954,7 @@ export default function PredictionPage() {
                   <label key={col} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={settings.featureColumns.includes(col)}
+                      checked={settings.featureColumns?.includes(col) || false}
                       onChange={() => toggleFeatureColumn(col)}
                       className="w-4 h-4 text-blue-600 rounded"
                     />
@@ -960,7 +964,7 @@ export default function PredictionPage() {
               )}
             </div>
             <p className="text-sm mt-3 text-gray-600">
-              已选择 {settings.featureColumns.length} 个特征列
+              已选择 {settings.featureColumns?.length || 0} 个特征列
             </p>
           </div>
         );

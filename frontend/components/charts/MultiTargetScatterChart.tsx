@@ -17,6 +17,8 @@ import {
   ReferenceLine,
   Cell,
 } from 'recharts';
+import ExportButton from '../ExportButton';
+import { exportToCSV, exportToPNG, generateFileName } from '@/lib/exportUtils';
 
 interface MultiTargetScatterChartProps {
   comparisonData: {
@@ -169,12 +171,57 @@ export default function MultiTargetScatterChart({
     <div className="space-y-8">
       {targetChartData.map(({ targetName, data }) => (
         <div key={targetName} className="bg-white rounded-lg shadow-sm border p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Prediction vs Actual Values - {targetName}
-          </h3>
-          
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900">
+              Prediction vs Actual Values - {targetName}
+            </h3>
+            <ExportButton
+              label="导出"
+              options={[
+                {
+                  label: '导出图片 (PNG)',
+                  format: 'png',
+                  onClick: async () => {
+                    const chartElement = document.querySelector(`[data-chart-id="scatter-${targetName}"]`) as HTMLElement;
+                    if (chartElement) {
+                      await exportToPNG(
+                        chartElement,
+                        generateFileName(`scatter_${targetName}_image`, 'png'),
+                        { scale: 1.5 }
+                      );
+                    }
+                  },
+                },
+                {
+                  label: '导出数据 (CSV)',
+                  format: 'csv',
+                  onClick: () => {
+                    const exportData = data.map((point: any) => {
+                      const taskIndex = task_ids.indexOf(point.taskId);
+                      const taskDisplayName = getTaskName(point.taskId, taskIndex);
+                      return {
+                        样本索引: point.sampleIndex,
+                        任务: taskDisplayName,
+                        真实值: point.actual,
+                        预测值: point.predicted,
+                        误差: Math.abs(point.actual - point.predicted).toFixed(3),
+                        一致性级别: point.consistency,
+                        一致性描述: getConsistencyLabel(point.consistency, n_tasks),
+                      };
+                    });
+                    exportToCSV(
+                      exportData,
+                      generateFileName(`scatter_${targetName}_data`, 'csv')
+                    );
+                  },
+                },
+              ]}
+            />
+          </div>
+
           {/* Scatter Plot */}
-          <ResponsiveContainer width="100%" height={400}>
+          <div data-chart-id={`scatter-${targetName}`}>
+            <ResponsiveContainer width="100%" height={400}>
             <ScatterChart margin={{ top: 20, right: 20, bottom: 60, left: 20 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis
@@ -218,6 +265,7 @@ export default function MultiTargetScatterChart({
               </Scatter>
             </ScatterChart>
           </ResponsiveContainer>
+          </div>
 
           {/* Performance Metrics */}
           {target_metrics && target_metrics[targetName] && (

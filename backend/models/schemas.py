@@ -156,7 +156,7 @@ class RAGPreviewRequest(BaseModel):
     feature_columns: Optional[List[str]] = Field(default=None, description="特征列名列表（可选）")
     train_ratio: float = Field(default=0.8, ge=0.5, le=0.9, description="训练集比例")
     random_seed: int = Field(default=42, description="随机种子")
-    max_retrieved_samples: int = Field(default=10, ge=1, le=50, description="RAG检索样本数")
+    max_retrieved_samples: int = Field(default=10, ge=1, description="RAG检索样本数（无上限限制）")
     similarity_threshold: float = Field(default=0.3, ge=0.0, le=1.0, description="相似度阈值")
     test_sample_index: int = Field(default=0, ge=0, description="预览的测试样本索引（从0开始）")
 

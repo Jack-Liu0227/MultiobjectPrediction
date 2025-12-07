@@ -13,6 +13,7 @@ from pathlib import Path
 from models.schemas import ResultsResponse, PredictionMetrics
 from services.pareto_analyzer import analyze_pareto_front
 from config import RESULTS_DIR
+from utils.json_serializer import serialize_dataframe, make_json_serializable
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -43,7 +44,7 @@ async def get_results(result_id: str):
             raise HTTPException(status_code=404, detail="预测结果文件不存在")
 
         df = pd.read_csv(predictions_file)
-        predictions = df.to_dict('records')
+        predictions = serialize_dataframe(df)
 
         # 读取评估指标
         metrics_file = result_dir / "metrics.json"
@@ -145,6 +146,9 @@ async def get_task_config_file(result_id: str):
         with open(config_file, "r", encoding="utf-8") as f:
             config_data = json.load(f)
 
+        # 确保所有数据都是 JSON 可序列化的（处理 inf, -inf, nan）
+        config_data = make_json_serializable(config_data)
+
         return config_data
 
     except HTTPException:
@@ -166,6 +170,9 @@ async def get_process_details_file(result_id: str):
 
         with open(process_details_file, "r", encoding="utf-8") as f:
             process_details_data = json.load(f)
+
+        # 确保所有数据都是 JSON 可序列化的（处理 inf, -inf, nan）
+        process_details_data = make_json_serializable(process_details_data)
 
         return process_details_data
 
@@ -220,6 +227,9 @@ async def get_pareto_analysis(result_id: str):
             objective_columns=predicted_cols,
             maximize_objectives=[True] * len(predicted_cols)
         )
+
+        # 确保所有数据都是 JSON 可序列化的（处理 inf, -inf, nan）
+        pareto_result = make_json_serializable(pareto_result)
 
         return pareto_result
 

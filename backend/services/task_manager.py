@@ -202,7 +202,7 @@ class TaskManager:
 
     def _save_task(self, task_id: str, task_info: Dict[str, Any]):
         """
-        保存任务信息到文件（使用原子写入避免损坏）
+        保存任务信息到文件（使用原子写入避免损坏，带重试机制）
 
         注意：不保存 process_details 字段，该字段应保存在 process_details.json 中
         """
@@ -216,60 +216,104 @@ class TaskManager:
             process_details = task_info_copy.pop("process_details")
             task_info_copy["process_details_count"] = len(process_details) if isinstance(process_details, list) else 0
 
-        try:
-            # 先写入临时文件
-            with open(temp_file, 'w', encoding='utf-8') as f:
-                json.dump(task_info_copy, f, ensure_ascii=False, indent=2)
+        # 重试配置
+        max_retries = 3
+        retry_delay = 0.5  # 秒
 
-            # 原子性地重命名（Windows上需要先删除目标文件）
-            if task_file.exists():
-                task_file.unlink()
-            temp_file.rename(task_file)
-        except Exception as e:
-            logger.error(f"Failed to save task {task_id}: {e}", exc_info=True)
-            # 清理临时文件
-            if temp_file.exists():
-                temp_file.unlink()
-            raise
+        for attempt in range(max_retries):
+            try:
+                # 先写入临时文件
+                with open(temp_file, 'w', encoding='utf-8') as f:
+                    json.dump(task_info_copy, f, ensure_ascii=False, indent=2)
+
+                # 原子性地重命名（Windows上需要先删除目标文件）
+                if task_file.exists():
+                    try:
+                        task_file.unlink()
+                    except PermissionError:
+                        if attempt < max_retries - 1:
+                            import time
+                            time.sleep(retry_delay)
+                            continue
+                        raise
+
+                temp_file.rename(task_file)
+                return  # 成功保存，退出
+
+            except PermissionError as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"❌ 文件权限错误 (尝试 {attempt + 1}/{max_retries}): {e}")
+                    import time
+                    time.sleep(retry_delay)
+                else:
+                    logger.error(f"❌ 文件权限错误: {e}")
+                    # 清理临时文件
+                    if temp_file.exists():
+                        try:
+                            temp_file.unlink()
+                        except:
+                            pass
+                    raise
+            except Exception as e:
+                logger.error(f"Failed to save task {task_id}: {e}", exc_info=True)
+                # 清理临时文件
+                if temp_file.exists():
+                    try:
+                        temp_file.unlink()
+                    except:
+                        pass
+                raise
     
     def _load_task(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """从文件加载任务信息"""
+        """从文件加载任务信息（带重试机制）"""
         task_file = self.storage_dir / f"{task_id}.json"
         if not task_file.exists():
             return None
 
-        try:
-            with open(task_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse task file {task_id}: {e}")
-            logger.error(f"Task file path: {task_file}")
-            # 返回一个最小的任务信息，避免完全失败
-            return {
-                "task_id": task_id,
-                "status": TaskStatus.FAILED.value,
-                "progress": 0.0,
-                "message": f"任务文件损坏，无法加载: {str(e)}",
-                "error": f"JSON解析错误: {str(e)}",
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
-            }
-        except PermissionError as e:
-            logger.warning(f"Permission denied when loading task file {task_id}: {e}")
-            logger.warning(f"Task file path: {task_file}")
-            # 返回一个最小的任务信息，表示文件被占用
-            return {
-                "task_id": task_id,
-                "status": TaskStatus.FAILED.value,
-                "progress": 0.0,
-                "message": "任务文件被占用，无法读取",
-                "error": f"文件权限错误: [Errno 13] Permission denied",
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
-            }
-        except Exception as e:
-            logger.error(f"Failed to load task file {task_id}: {e}", exc_info=True)
-            return None
+        # 重试配置
+        max_retries = 3
+        retry_delay = 0.3  # 秒
+
+        for attempt in range(max_retries):
+            try:
+                with open(task_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse task file {task_id}: {e}")
+                logger.error(f"Task file path: {task_file}")
+                # 返回一个最小的任务信息，避免完全失败
+                return {
+                    "task_id": task_id,
+                    "status": TaskStatus.FAILED.value,
+                    "progress": 0.0,
+                    "message": f"任务文件损坏，无法加载: {str(e)}",
+                    "error": f"JSON解析错误: {str(e)}",
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat(),
+                }
+            except PermissionError as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"文件被占用，重试读取 (尝试 {attempt + 1}/{max_retries}): {task_id}")
+                    import time
+                    time.sleep(retry_delay)
+                else:
+                    logger.warning(f"❌ 文件权限错误: {e}")
+                    logger.warning(f"Task file path: {task_file}")
+                    # 返回一个最小的任务信息，表示文件被占用
+                    return {
+                        "task_id": task_id,
+                        "status": TaskStatus.FAILED.value,
+                        "progress": 0.0,
+                        "message": "任务文件被占用，无法读取",
+                        "error": f"文件权限错误: [Errno 13] Permission denied",
+                        "created_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat(),
+                    }
+            except Exception as e:
+                logger.error(f"Failed to load task file {task_id}: {e}", exc_info=True)
+                return None
+
+        return None
     
     def list_tasks(
         self,

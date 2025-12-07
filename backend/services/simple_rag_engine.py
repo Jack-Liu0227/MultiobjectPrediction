@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 import logging
 import re
 import os
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -305,42 +306,94 @@ class SimpleRAGEngine:
                 # 从配置文件获取 API Key 和 Base URL
                 model_config = get_model_config_by_name(full_model_name)
 
-                if model_config:
-                    api_key = model_config.get('api_key')
-                    base_url = model_config.get('base_url')
-                    actual_model = model_config.get('model', full_model_name)
+                # 重试配置
+                max_retries = 3
+                retry_delay = 2  # 初始延迟（秒）
+                last_error = None
 
-                    logger.info(f"Calling LLM with model: {actual_model}")
-                    logger.info(f"Using base_url: {base_url}")
+                for attempt in range(max_retries):
+                    try:
+                        if model_config:
+                            api_key = model_config.get('api_key')
+                            base_url = model_config.get('base_url')
+                            actual_model = model_config.get('model', full_model_name)
 
-                    # 调用 LLM（传递 API Key 和 Base URL）
-                    response = litellm.completion(
-                        model=actual_model,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=temperature,
-                        api_key=api_key,
-                        base_url=base_url
-                    )
-                else:
-                    # 如果没有找到配置，使用默认方式调用（依赖环境变量）
-                    logger.warning(f"No config found for model: {full_model_name}, using environment variables")
-                    response = litellm.completion(
-                        model=full_model_name,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=temperature
-                    )
+                            if attempt > 0:
+                                logger.info(f"Retry attempt {attempt + 1}/{max_retries} for model: {actual_model}")
+                            else:
+                                logger.info(f"Calling LLM with model: {actual_model}")
+                                logger.info(f"Using base_url: {base_url}")
 
-                prediction_text = response.choices[0].message.content
+                            # 调用 LLM（传递 API Key 和 Base URL）
+                            response = litellm.completion(
+                                model=actual_model,
+                                messages=[{"role": "user", "content": prompt}],
+                                temperature=temperature,
+                                api_key=api_key,
+                                base_url=base_url
+                            )
+                        else:
+                            # 如果没有找到配置，使用默认方式调用（依赖环境变量）
+                            if attempt == 0:
+                                logger.warning(f"No config found for model: {full_model_name}, using environment variables")
+                            response = litellm.completion(
+                                model=full_model_name,
+                                messages=[{"role": "user", "content": prompt}],
+                                temperature=temperature
+                            )
 
-                # 从响应中提取多目标预测值
-                predictions = self._extract_multi_target_predictions(prediction_text, target_columns)
+                        prediction_text = response.choices[0].message.content
 
-                # 如果需要返回详细信息
+                        # 从响应中提取多目标预测值
+                        predictions = self._extract_multi_target_predictions(prediction_text, target_columns)
+
+                        # 如果需要返回详细信息
+                        if return_details:
+                            return {
+                                'predictions': predictions,
+                                'prompt': prompt,
+                                'llm_response': prediction_text,
+                                'similar_samples': similar_samples
+                            }
+                        else:
+                            return predictions
+
+                    except Exception as retry_error:
+                        last_error = retry_error
+                        error_str = str(retry_error)
+
+                        # 检查是否是可重试的错误（500 内部服务器错误）
+                        is_retryable = (
+                            'InternalServerError' in error_str or
+                            'Internal server error' in error_str or
+                            '500' in error_str or
+                            'http_error' in error_str
+                        )
+
+                        if is_retryable and attempt < max_retries - 1:
+                            wait_time = retry_delay * (2 ** attempt)  # 指数退避
+                            logger.warning(
+                                f"LLM API 调用失败 (尝试 {attempt + 1}/{max_retries}): {error_str}. "
+                                f"等待 {wait_time} 秒后重试..."
+                            )
+                            time.sleep(wait_time)
+                        else:
+                            # 不可重试的错误或已达到最大重试次数
+                            if attempt < max_retries - 1:
+                                logger.error(f"遇到不可重试的错误: {error_str}")
+                            break
+
+                # 所有重试都失败
+                logger.error(f"LLM prediction failed after {max_retries} attempts: {last_error}", exc_info=True)
+                # 预测失败时，填充 0 而不是使用平均值
+                predictions = {col: 0.0 for col in target_columns}
+                error_msg = f"Error: {str(last_error)}"
+                logger.warning(f"使用默认值 0.0 填充所有目标属性: {list(target_columns)}")
                 if return_details:
                     return {
                         'predictions': predictions,
-                        'prompt': prompt,
-                        'llm_response': prediction_text,
+                        'prompt': prompt if 'prompt' in locals() else None,  # 保存已构建的 prompt（如果有）
+                        'llm_response': error_msg,
                         'similar_samples': similar_samples
                     }
                 else:

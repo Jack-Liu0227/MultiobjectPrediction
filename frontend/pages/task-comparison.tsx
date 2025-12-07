@@ -9,6 +9,8 @@ import { getTaskList, compareTasksAPI, saveComparisonAPI, getComparisonHistoryAP
 import MultiTargetScatterChart from '@/components/charts/MultiTargetScatterChart';
 import ConsistencyDistributionChart from '@/components/charts/ConsistencyDistributionChart';
 import { taskEvents } from '@/lib/taskEvents';
+import ExportButton from '@/components/ExportButton';
+import { exportToCSV, exportToExcel, exportToHTML, exportToPNG, generateFileName, exportToExcelMultiSheet } from '@/lib/exportUtils';
 
 interface Task {
   task_id: string;
@@ -629,15 +631,18 @@ export default function TaskComparisonPage() {
                         const hasCustomName = customTaskNames[task.task_id] && customTaskNames[task.task_id].trim() !== '';
 
                         return (
-                          <button
+                          <div
                             key={task.task_id}
-                            onClick={() => handleTaskToggle(task.task_id)}
-                            className={`group relative inline-flex flex-col items-start gap-1 px-3 py-2 rounded-lg border-2 transition-all min-w-[200px] max-w-[320px] ${
-                              isSelected
-                                ? 'bg-blue-600 border-blue-600 text-white shadow-md'
-                                : 'bg-white border-gray-300 text-gray-700 hover:border-blue-400 hover:shadow-sm'
-                            }`}
+                            className="group relative"
                           >
+                            <button
+                              onClick={() => handleTaskToggle(task.task_id)}
+                              className={`relative inline-flex flex-col items-start gap-1 px-3 py-2 rounded-lg border-2 transition-all min-w-[200px] max-w-[320px] w-full ${
+                                isSelected
+                                  ? 'bg-blue-600 border-blue-600 text-white shadow-md'
+                                  : 'bg-white border-gray-300 text-gray-700 hover:border-blue-400 hover:shadow-sm'
+                              }`}
+                            >
                             {/* Top row: Number badge + Main display name */}
                             <div className="flex items-center gap-2 w-full">
                               <div className={`flex-shrink-0 w-5 h-5 rounded text-xs font-bold flex items-center justify-center ${
@@ -712,7 +717,25 @@ export default function TaskComparisonPage() {
                                 </div>
                               )}
                             </div>
-                          </button>
+                            </button>
+
+                            {/* Hover action button - View Results */}
+                            {task.result_id && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  router.push(`/results/${task.result_id}`);
+                                }}
+                                className="absolute top-1/2 right-2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg shadow-lg hover:shadow-xl z-10"
+                                title="查看任务结果详情"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                </svg>
+                                查看结果
+                              </button>
+                            )}
+                          </div>
                         );
                       })}
                     </div>
@@ -759,6 +782,9 @@ export default function TaskComparisonPage() {
                           </th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                             自定义名称
+                          </th>
+                          <th className="px-4 py-3 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                            操作
                           </th>
                         </tr>
                       </thead>
@@ -874,6 +900,30 @@ export default function TaskComparisonPage() {
                                 onClick={(e) => e.stopPropagation()}
                               />
                             </td>
+                            <td className="px-4 py-3 text-center">
+                              {task.result_id ? (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    router.push(`/results/${task.result_id}`);
+                                  }}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors shadow-sm hover:shadow-md"
+                                  title="查看任务结果详情"
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                  </svg>
+                                  查看结果
+                                </button>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-3 py-1.5 bg-gray-100 text-gray-400 text-xs font-medium rounded-lg cursor-not-allowed" title="该任务暂无结果">
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                                  </svg>
+                                  无结果
+                                </span>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -892,6 +942,7 @@ export default function TaskComparisonPage() {
                   <div>
                     <p className="font-medium text-blue-900">使用提示</p>
                     <ul className="mt-1 space-y-0.5 text-blue-800">
+                      <li>• 点击<strong>"查看结果"</strong>按钮可跳转到该任务的结果详情页</li>
                       <li>• 点击备注单元格可编辑（Enter 保存，Esc 取消）</li>
                       <li>• 自定义名称将用于图表中的任务标识显示</li>
                       <li>• 选择至少 2 个任务后可开始对比分析</li>
@@ -1068,7 +1119,7 @@ export default function TaskComparisonPage() {
                 {/* Render results */}
                 {Object.entries(comparisonResults).map(([key, result]: [string, any]) => (
                   <div key={key} className="space-y-6">
-                    {/* Target Column Header with Save Button */}
+                    {/* Target Column Header with Save and Export Buttons */}
                     <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg shadow-sm border-2 border-blue-200 p-4">
                       <div className="flex items-center justify-between">
                         <h2 className="text-xl font-bold text-gray-900">
@@ -1077,19 +1128,98 @@ export default function TaskComparisonPage() {
                             : result.target_columns[0]
                           }
                         </h2>
-                        <button
-                          onClick={() => setShowSaveDialog(true)}
-                          className={`px-4 py-2 text-white rounded-lg transition-colors flex items-center gap-2 ${
-                            activeHistoryId
-                              ? 'bg-orange-600 hover:bg-orange-700'
-                              : 'bg-green-600 hover:bg-green-700'
-                          }`}
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-                          </svg>
-                          {activeHistoryId ? 'Update & Replace' : 'Save Result'}
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <ExportButton
+                            label="导出对比结果"
+                            options={[
+                              {
+                                label: '导出汇总数据 (CSV)',
+                                format: 'csv',
+                                onClick: () => {
+                                  const summaryData = [
+                                    {
+                                      指标: '对比任务数',
+                                      值: result.n_tasks,
+                                    },
+                                    {
+                                      指标: '共同样本数',
+                                      值: result.total_samples,
+                                    },
+                                    {
+                                      指标: '目标属性数',
+                                      值: result.target_columns.length,
+                                    },
+                                    {
+                                      指标: '容差',
+                                      值: tolerance + '%',
+                                    },
+                                  ];
+                                  exportToCSV(
+                                    summaryData,
+                                    generateFileName('comparison_summary', 'csv')
+                                  );
+                                },
+                              },
+                              {
+                                label: '导出一致性分布 (CSV)',
+                                format: 'csv',
+                                onClick: () => {
+                                  const distData = Object.entries(result.consistency_distribution).map(([label, data]: [string, any]) => ({
+                                    一致性级别: label,
+                                    样本数: data.count,
+                                    百分比: data.percentage.toFixed(2) + '%',
+                                  }));
+                                  exportToCSV(
+                                    distData,
+                                    generateFileName('consistency_distribution', 'csv')
+                                  );
+                                },
+                              },
+                              {
+                                label: '导出完整报告 (Excel)',
+                                format: 'excel',
+                                onClick: () => {
+                                  const sheets = [
+                                    {
+                                      name: '汇总',
+                                      data: [
+                                        { 指标: '对比任务数', 值: result.n_tasks },
+                                        { 指标: '共同样本数', 值: result.total_samples },
+                                        { 指标: '目标属性数', 值: result.target_columns.length },
+                                        { 指标: '容差', 值: tolerance + '%' },
+                                      ],
+                                    },
+                                    {
+                                      name: '一致性分布',
+                                      data: Object.entries(result.consistency_distribution).map(([label, data]: [string, any]) => ({
+                                        一致性级别: label,
+                                        样本数: data.count,
+                                        百分比: data.percentage.toFixed(2) + '%',
+                                      })),
+                                    },
+                                  ];
+                                  exportToExcelMultiSheet(
+                                    sheets,
+                                    generateFileName('comparison_report', 'xlsx')
+                                  );
+                                },
+                              },
+                            ]}
+                          />
+                          <button
+                            onClick={() => setShowSaveDialog(true)}
+                            className={`px-4 py-2 text-white rounded-lg transition-colors flex items-center gap-2 ${
+                              activeHistoryId
+                                ? 'bg-orange-600 hover:bg-orange-700'
+                                : 'bg-green-600 hover:bg-green-700'
+                            }`}
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                            </svg>
+                            {activeHistoryId ? 'Update & Replace' : 'Save Result'}
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -1120,26 +1250,171 @@ export default function TaskComparisonPage() {
                     <div className="bg-white rounded-lg shadow-sm border p-6">
                       <div className="flex items-center justify-between mb-4">
                         <h3 className="text-lg font-semibold text-gray-900">Consistency Distribution</h3>
+                        <ExportButton
+                          label="导出一致性分布"
+                          options={[
+                            {
+                              label: '导出图片 (PNG)',
+                              format: 'png',
+                              onClick: async () => {
+                                const chartElement = document.querySelector('[data-chart-type="consistency-distribution"]') as HTMLElement;
+                                if (chartElement) {
+                                  await exportToPNG(
+                                    chartElement,
+                                    generateFileName('consistency_distribution_chart', 'png')
+                                  );
+                                }
+                              },
+                            },
+                            {
+                              label: '导出数据 (CSV)',
+                              format: 'csv',
+                              onClick: () => {
+                                const distData = Object.entries(result.consistency_distribution).map(([label, data]: [string, any]) => ({
+                                  一致性级别: label,
+                                  样本数: data.count,
+                                  百分比: data.percentage.toFixed(2) + '%',
+                                }));
+                                exportToCSV(
+                                  distData,
+                                  generateFileName('consistency_distribution_data', 'csv')
+                                );
+                              },
+                            },
+                          ]}
+                        />
                       </div>
-                      <ConsistencyDistributionChart
-                        consistencyDistribution={result.consistency_distribution}
-                        nTasks={result.n_tasks}
-                      />
+                      <div data-chart-type="consistency-distribution">
+                        <ConsistencyDistributionChart
+                          consistencyDistribution={result.consistency_distribution}
+                          nTasks={result.n_tasks}
+                        />
+                      </div>
                     </div>
 
                     {/* Scatter Plots for Each Target Property */}
-                    <MultiTargetScatterChart
-                      comparisonData={result}
-                      taskNames={Object.fromEntries(
-                        tasks
-                          .filter(t => result.task_ids.includes(t.task_id))
-                          .map(t => [t.task_id, getTaskDisplayName(t)])
-                      )}
-                    />
+                    <div className="bg-white rounded-lg shadow-sm border p-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-semibold text-gray-900">Multi-Target Scatter Plots</h3>
+                        <ExportButton
+                          label="批量导出所有图表"
+                          options={[
+                            {
+                              label: '导出所有图表 (PNG)',
+                              format: 'png',
+                              onClick: async () => {
+                                const chartElement = document.querySelector('[data-chart-type="multi-target-scatter"]') as HTMLElement;
+                                if (chartElement) {
+                                  await exportToPNG(
+                                    chartElement,
+                                    generateFileName('multi_target_scatter_all_charts', 'png'),
+                                    { scale: 1.5 }
+                                  );
+                                }
+                              },
+                            },
+                            {
+                              label: '导出所有数据 (CSV)',
+                              format: 'csv',
+                              onClick: () => {
+                                const scatterData: any[] = [];
+                                result.sample_details.forEach((sample: any) => {
+                                  result.target_columns.forEach((targetName: string) => {
+                                    const targetData = sample.targets[targetName];
+                                    if (targetData) {
+                                      Object.entries(targetData.predictions).forEach(([taskId, predicted]: [string, any]) => {
+                                        const task = tasks.find(t => t.task_id === taskId);
+                                        scatterData.push({
+                                          样本索引: sample.sample_index,
+                                          目标属性: targetName,
+                                          任务: getTaskDisplayName(task || { task_id: taskId } as Task),
+                                          真实值: targetData.actual_value,
+                                          预测值: predicted,
+                                          误差: Math.abs(targetData.actual_value - predicted).toFixed(3),
+                                          一致性级别: sample.consistency_level,
+                                        });
+                                      });
+                                    }
+                                  });
+                                });
+                                exportToCSV(
+                                  scatterData,
+                                  generateFileName('multi_target_scatter_all_data', 'csv')
+                                );
+                              },
+                            },
+                          ]}
+                        />
+                      </div>
+                      <div data-chart-type="multi-target-scatter">
+                        <MultiTargetScatterChart
+                          comparisonData={result}
+                          taskNames={Object.fromEntries(
+                            tasks
+                              .filter(t => result.task_ids.includes(t.task_id))
+                              .map(t => [t.task_id, getTaskDisplayName(t)])
+                          )}
+                        />
+                      </div>
+                    </div>
 
                     {/* Detailed Statistics Table */}
                     <div className="bg-white rounded-lg shadow-sm border p-6">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Detailed Statistics</h3>
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-semibold text-gray-900">Detailed Statistics</h3>
+                        <ExportButton
+                          label="导出统计表"
+                          options={[
+                            {
+                              label: '导出为 CSV',
+                              format: 'csv',
+                              onClick: () => {
+                                const statsData = Object.entries(result.consistency_distribution).map(([label, data]: [string, any]) => ({
+                                  一致性级别: label,
+                                  样本数: data.count,
+                                  百分比: data.percentage.toFixed(1) + '%',
+                                }));
+                                exportToCSV(
+                                  statsData,
+                                  generateFileName('detailed_statistics', 'csv')
+                                );
+                              },
+                            },
+                            {
+                              label: '导出为 Excel',
+                              format: 'excel',
+                              onClick: () => {
+                                const statsData = Object.entries(result.consistency_distribution).map(([label, data]: [string, any]) => ({
+                                  一致性级别: label,
+                                  样本数: data.count,
+                                  百分比: data.percentage.toFixed(1) + '%',
+                                }));
+                                exportToExcel(
+                                  statsData,
+                                  generateFileName('detailed_statistics', 'xlsx'),
+                                  '详细统计'
+                                );
+                              },
+                            },
+                            {
+                              label: '导出为 HTML',
+                              format: 'html',
+                              onClick: () => {
+                                const statsData = Object.entries(result.consistency_distribution).map(([label, data]: [string, any]) => ({
+                                  一致性级别: label,
+                                  样本数: data.count,
+                                  百分比: data.percentage.toFixed(1) + '%',
+                                }));
+                                exportToHTML(
+                                  statsData,
+                                  generateFileName('detailed_statistics', 'html'),
+                                  'Detailed Statistics'
+                                );
+                              },
+                            },
+                          ]}
+                        />
+                      </div>
                       <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-200">
                           <thead className="bg-gray-50">

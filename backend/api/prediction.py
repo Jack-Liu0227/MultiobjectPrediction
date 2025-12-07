@@ -18,6 +18,7 @@ from services.task_manager import get_task_manager
 from services.rag_prediction_service import RAGPredictionService
 from services.file_handler import FileHandler
 from config import UPLOAD_DIR
+from utils.json_serializer import make_json_serializable, serialize_dataframe_row
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -410,32 +411,13 @@ async def preview_rag_retrieval(request: RAGPreviewRequest):
         similar_samples = []
         for sim_idx in similar_indices:
             # 获取完整行数据并转换为字典
-            row_data = train_df.iloc[sim_idx].to_dict()
-            # 转换所有值为可序列化的类型
-            sample_data = {}
-            for key, value in row_data.items():
-                if pd.isna(value):
-                    sample_data[key] = None
-                elif isinstance(value, (int, float, str, bool)):
-                    sample_data[key] = value
-                else:
-                    sample_data[key] = str(value)
-
+            sample_data = serialize_dataframe_row(train_df.iloc[sim_idx])
             # 添加相似度分数
             sample_data['similarity_score'] = float(similarities[sim_idx])
             similar_samples.append(sample_data)
 
         # 准备测试样本数据（包含完整行数据）
-        test_sample_data = test_row.to_dict()
-        # 转换所有值为可序列化的类型
-        test_sample_serializable = {}
-        for key, value in test_sample_data.items():
-            if pd.isna(value):
-                test_sample_serializable[key] = None
-            elif isinstance(value, (int, float, str, bool)):
-                test_sample_serializable[key] = value
-            else:
-                test_sample_serializable[key] = str(value)
+        test_sample_serializable = serialize_dataframe_row(test_row)
 
         logger.info(f"RAG 预览完成: 测试样本索引 {request.test_sample_index}, 检索到 {len(similar_samples)} 个相似样本")
 
