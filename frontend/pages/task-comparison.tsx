@@ -8,6 +8,7 @@ import { useRouter } from 'next/router';
 import { getTaskList, compareTasksAPI, saveComparisonAPI, getComparisonHistoryAPI, getComparisonDetailAPI, deleteComparisonAPI } from '@/lib/api';
 import MultiTargetScatterChart from '@/components/charts/MultiTargetScatterChart';
 import ConsistencyDistributionChart from '@/components/charts/ConsistencyDistributionChart';
+import { taskEvents } from '@/lib/taskEvents';
 
 interface Task {
   task_id: string;
@@ -46,35 +47,52 @@ export default function TaskComparisonPage() {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Sidebar state
-  const [sidebarOpen, setSidebarOpen] = useState(() => {
-    // Load sidebar state from localStorage
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('taskComparisonSidebarOpen');
-      return saved !== null ? JSON.parse(saved) : true;
-    }
-    return true;
-  });
-
-  // Task display mode: 'id' | 'note' | 'filename' | 'custom'
-  const [taskDisplayMode, setTaskDisplayMode] = useState<'id' | 'note' | 'filename' | 'custom'>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('taskComparisonDisplayMode');
-      return (saved as 'id' | 'note' | 'filename' | 'custom') || 'id';
-    }
-    return 'id';
-  });
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // Custom task names mapping: { taskId: customName }
-  const [customTaskNames, setCustomTaskNames] = useState<{ [taskId: string]: string }>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('taskComparisonCustomNames');
-      return saved ? JSON.parse(saved) : {};
-    }
-    return {};
-  });
+  const [customTaskNames, setCustomTaskNames] = useState<{ [taskId: string]: string }>({});
 
-  // Show custom name editor dialog
-  const [showCustomNameEditor, setShowCustomNameEditor] = useState(false);
+  // Client-side mount state (avoid hydration errors)
+  const [mounted, setMounted] = useState(false);
+
+  // 编辑状态
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingNote, setEditingNote] = useState<string>('');
+
+  // 任务表格折叠状态
+  const [taskTableCollapsed, setTaskTableCollapsed] = useState(true);
+
+  // 任务显示模式: 'id' | 'note' | 'filename' | 'custom'
+  const [taskDisplayMode, setTaskDisplayMode] = useState<'id' | 'note' | 'filename' | 'custom'>('note');
+
+  // Load localStorage values after mount (avoid hydration errors)
+  useEffect(() => {
+    setMounted(true);
+
+    // Load sidebar state from localStorage
+    const savedSidebarOpen = localStorage.getItem('taskComparisonSidebarOpen');
+    if (savedSidebarOpen !== null) {
+      setSidebarOpen(JSON.parse(savedSidebarOpen));
+    }
+
+    // Load custom task names from localStorage
+    const savedCustomNames = localStorage.getItem('taskComparisonCustomNames');
+    if (savedCustomNames) {
+      setCustomTaskNames(JSON.parse(savedCustomNames));
+    }
+
+    // Load task table collapsed state from localStorage
+    const savedCollapsed = localStorage.getItem('taskComparisonTableCollapsed');
+    if (savedCollapsed !== null) {
+      setTaskTableCollapsed(JSON.parse(savedCollapsed));
+    }
+
+    // Load task display mode from localStorage
+    const savedDisplayMode = localStorage.getItem('taskComparisonDisplayMode');
+    if (savedDisplayMode) {
+      setTaskDisplayMode(savedDisplayMode as 'id' | 'note' | 'filename' | 'custom');
+    }
+  }, []);
 
   // Load completed tasks
   useEffect(() => {
@@ -88,19 +106,44 @@ export default function TaskComparisonPage() {
     }
   }, []);
 
+  // Save task table collapsed state to localStorage
+  useEffect(() => {
+    if (mounted) {
+      localStorage.setItem('taskComparisonTableCollapsed', JSON.stringify(taskTableCollapsed));
+    }
+  }, [taskTableCollapsed, mounted]);
+
+  // Save task display mode to localStorage
+  useEffect(() => {
+    if (mounted) {
+      localStorage.setItem('taskComparisonDisplayMode', taskDisplayMode);
+    }
+  }, [taskDisplayMode, mounted]);
+
+  // 监听任务更新事件（跨组件同步）
+  useEffect(() => {
+    const handleNoteUpdate = (data: { taskId: string; field?: string; value?: any }) => {
+      // 更新任务列表中的 Note
+      setTasks(prevTasks =>
+        prevTasks.map(t =>
+          t.task_id === data.taskId ? { ...t, note: data.value } : t
+        )
+      );
+    };
+
+    taskEvents.on('note-updated', handleNoteUpdate);
+
+    return () => {
+      taskEvents.off('note-updated', handleNoteUpdate);
+    };
+  }, []);
+
   // Save sidebar state to localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
       localStorage.setItem('taskComparisonSidebarOpen', JSON.stringify(sidebarOpen));
     }
   }, [sidebarOpen]);
-
-  // Save task display mode to localStorage
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('taskComparisonDisplayMode', taskDisplayMode);
-    }
-  }, [taskDisplayMode]);
 
   // Save custom task names to localStorage
   useEffect(() => {
@@ -155,6 +198,38 @@ export default function TaskComparisonPage() {
     } catch (err: any) {
       setError(err.message || 'Failed to load tasks');
     }
+  };
+
+  // Get task display name based on current mode
+  const getTaskDisplayName = (task: Task): string => {
+    switch (taskDisplayMode) {
+      case 'custom':
+        return customTaskNames[task.task_id] || task.note || task.filename || task.task_id.substring(0, 8);
+      case 'note':
+        return task.note || task.task_id.substring(0, 8);
+      case 'filename':
+        return task.filename || task.task_id.substring(0, 8);
+      case 'id':
+      default:
+        return task.task_id.substring(0, 8);
+    }
+  };
+
+  // Get task display info by task_id (for history cards)
+  const getTaskDisplayInfo = (taskId: string): { name: string; icon: string } => {
+    const task = tasks.find(t => t.task_id === taskId);
+    if (!task) {
+      return { name: taskId.substring(0, 8), icon: '🔍' };
+    }
+
+    const customName = customTaskNames[taskId];
+    if (customName && customName.trim() !== '') {
+      return { name: customName, icon: '🏷️' };
+    }
+    if (task.note && task.note.trim() !== '') {
+      return { name: task.note, icon: '💬' };
+    }
+    return { name: task.filename || taskId.substring(0, 8), icon: '📄' };
   };
 
   // Handle task selection
@@ -242,19 +317,51 @@ export default function TaskComparisonPage() {
     return date.toLocaleDateString();
   };
 
-  // Get task display name based on display mode
-  const getTaskDisplayName = (task: Task): string => {
-    switch (taskDisplayMode) {
-      case 'custom':
-        return customTaskNames[task.task_id] || task.task_id;
-      case 'note':
-        return task.note || task.task_id;
-      case 'filename':
-        return task.filename || task.task_id;
-      case 'id':
-      default:
-        return task.task_id;
+  // 开始编辑备注
+  const handleStartEditNote = (taskId: string, currentNote: string) => {
+    setEditingTaskId(taskId);
+    setEditingNote(currentNote || '');
+  };
+
+  // 保存备注
+  const handleSaveNote = async (taskId: string) => {
+    try {
+      const response = await fetch(`http://localhost:8000/api/tasks/${taskId}/note`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ note: editingNote }),
+      });
+
+      if (!response.ok) {
+        throw new Error('更新备注失败');
+      }
+
+      // 更新本地任务列表
+      setTasks(tasks.map(t =>
+        t.task_id === taskId ? { ...t, note: editingNote } : t
+      ));
+
+      // 触发事件，通知其他组件更新
+      taskEvents.emit('note-updated', {
+        taskId,
+        field: 'note',
+        value: editingNote,
+      });
+
+      // 清除编辑状态
+      setEditingTaskId(null);
+      setEditingNote('');
+    } catch (err: any) {
+      alert(err.message || '更新备注失败');
     }
+  };
+
+  // 取消编辑
+  const handleCancelEdit = () => {
+    setEditingTaskId(null);
+    setEditingNote('');
   };
 
   // Save comparison result
@@ -365,6 +472,11 @@ export default function TaskComparisonPage() {
     }
   };
 
+  // Prevent rendering until mounted (avoid hydration errors)
+  if (!mounted) {
+    return null;
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -375,84 +487,424 @@ export default function TaskComparisonPage() {
               <button
                 onClick={() => router.push('/prediction')}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Back to Prediction"
+                title="返回预测主页面"
               >
                 <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                 </svg>
               </button>
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">Task Comparison Analysis</h1>
-                <p className="text-sm text-gray-500 mt-1">Compare prediction results across multiple tasks</p>
+                <h1 className="text-2xl font-bold text-gray-900">任务对比分析</h1>
+                <p className="text-sm text-gray-500 mt-1">对比多个任务的预测结果</p>
               </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => router.push('/prediction')}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+              >
+                🔮 新建预测
+              </button>
+              <button
+                onClick={() => router.push('/tasks')}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors"
+              >
+                📋 任务列表
+              </button>
             </div>
           </div>
 
-          {/* Task Display Mode Selector */}
-          <div className="mt-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <label className="text-sm font-medium text-gray-700">Task Display:</label>
-              <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
-                <button
-                  onClick={() => setTaskDisplayMode('id')}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                    taskDisplayMode === 'id'
-                      ? 'bg-white text-blue-600 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  Task ID
-                </button>
-                <button
-                  onClick={() => setTaskDisplayMode('note')}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                    taskDisplayMode === 'note'
-                      ? 'bg-white text-blue-600 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  Note
-                </button>
-                <button
-                  onClick={() => setTaskDisplayMode('filename')}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                    taskDisplayMode === 'filename'
-                      ? 'bg-white text-blue-600 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  Filename
-                </button>
-                <button
-                  onClick={() => setTaskDisplayMode('custom')}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                    taskDisplayMode === 'custom'
-                      ? 'bg-white text-blue-600 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  Custom
-                </button>
+
+          {/* Task Selection - Compact Card at Top */}
+          <div className="mt-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200 shadow-sm">
+            <div className="p-4">
+              {/* Header with collapse button */}
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-3 flex-1">
+                  <button
+                    onClick={() => setTaskTableCollapsed(!taskTableCollapsed)}
+                    className="w-8 h-8 bg-blue-600 hover:bg-blue-700 rounded-lg flex items-center justify-center transition-colors"
+                    title={taskTableCollapsed ? '展开任务列表' : '折叠任务列表'}
+                  >
+                    <svg
+                      className={`w-5 h-5 text-white transition-transform duration-200 ${taskTableCollapsed ? '' : 'rotate-180'}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  <div className="flex-1">
+                    <h3 className="text-base font-semibold text-gray-900">选择任务</h3>
+                    <p className="text-xs text-gray-600">
+                      {selectedTaskIds.length > 0 ? (
+                        <span className="text-blue-600 font-medium">{selectedTaskIds.length} 个任务已选择</span>
+                      ) : (
+                        '请选择至少 2 个任务进行对比'
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {/* Display Mode Selector */}
+                  {!taskTableCollapsed && (
+                    <div className="flex items-center gap-2 bg-white rounded-lg p-1 border border-blue-200">
+                      <button
+                        onClick={() => setTaskDisplayMode('id')}
+                        className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                          taskDisplayMode === 'id'
+                            ? 'bg-blue-600 text-white'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                        title="显示任务ID"
+                      >
+                        ID
+                      </button>
+                      <button
+                        onClick={() => setTaskDisplayMode('note')}
+                        className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                          taskDisplayMode === 'note'
+                            ? 'bg-blue-600 text-white'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                        title="显示备注"
+                      >
+                        备注
+                      </button>
+                      <button
+                        onClick={() => setTaskDisplayMode('filename')}
+                        className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                          taskDisplayMode === 'filename'
+                            ? 'bg-blue-600 text-white'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                        title="显示文件名"
+                      >
+                        文件名
+                      </button>
+                      <button
+                        onClick={() => setTaskDisplayMode('custom')}
+                        className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                          taskDisplayMode === 'custom'
+                            ? 'bg-blue-600 text-white'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                        title="显示自定义名称"
+                      >
+                        自定义
+                      </button>
+                    </div>
+                  )}
+                  {tasks.length > 0 && !taskTableCollapsed && (
+                    <button
+                      onClick={() => {
+                        if (selectedTaskIds.length === tasks.length) {
+                          setSelectedTaskIds([]);
+                        } else {
+                          setSelectedTaskIds(tasks.map(t => t.task_id));
+                        }
+                      }}
+                      className="px-3 py-1.5 text-sm font-medium text-blue-700 bg-white hover:bg-blue-50 border border-blue-300 rounded-lg transition-colors"
+                    >
+                      {selectedTaskIds.length === tasks.length ? '取消全选' : '全选'}
+                    </button>
+                  )}
+                </div>
               </div>
-              {taskDisplayMode === 'custom' && (
-                <button
-                  onClick={() => setShowCustomNameEditor(true)}
-                  className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                  Edit Names
-                </button>
+
+              {/* Collapsed View - Rich Information Cards */}
+              {taskTableCollapsed ? (
+                tasks.length === 0 ? (
+                  <div className="text-center py-4 bg-white rounded-lg border border-gray-200">
+                    <p className="text-sm text-gray-500">未找到已完成的任务</p>
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-lg border border-gray-200 p-3">
+                    <div className="flex flex-wrap gap-2.5">
+                      {tasks.map((task, index) => {
+                        const isSelected = selectedTaskIds.includes(task.task_id);
+                        const displayName = getTaskDisplayName(task);
+                        const hasNote = task.note && task.note.trim() !== '';
+                        const hasCustomName = customTaskNames[task.task_id] && customTaskNames[task.task_id].trim() !== '';
+
+                        return (
+                          <button
+                            key={task.task_id}
+                            onClick={() => handleTaskToggle(task.task_id)}
+                            className={`group relative inline-flex flex-col items-start gap-1 px-3 py-2 rounded-lg border-2 transition-all min-w-[200px] max-w-[320px] ${
+                              isSelected
+                                ? 'bg-blue-600 border-blue-600 text-white shadow-md'
+                                : 'bg-white border-gray-300 text-gray-700 hover:border-blue-400 hover:shadow-sm'
+                            }`}
+                          >
+                            {/* Top row: Number badge + Main display name */}
+                            <div className="flex items-center gap-2 w-full">
+                              <div className={`flex-shrink-0 w-5 h-5 rounded text-xs font-bold flex items-center justify-center ${
+                                isSelected
+                                  ? 'bg-blue-500 text-white'
+                                  : 'bg-gradient-to-br from-blue-500 to-indigo-600 text-white'
+                              }`}>
+                                {index + 1}
+                              </div>
+                              <span className={`text-sm font-semibold truncate flex-1 ${
+                                isSelected ? 'text-white' : 'text-gray-900'
+                              }`} title={displayName}>
+                                {displayName}
+                              </span>
+                            </div>
+
+                            {/* Secondary information rows */}
+                            <div className="flex flex-col gap-0.5 w-full pl-7 text-xs">
+                              {/* Show note if exists and not already the main display */}
+                              {hasNote && taskDisplayMode !== 'note' && (
+                                <div className={`flex items-start gap-1 ${
+                                  isSelected ? 'text-blue-100' : 'text-gray-600'
+                                }`}>
+                                  <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                                  </svg>
+                                  <span className="truncate" title={task.note}>
+                                    {task.note.length > 30 ? task.note.substring(0, 30) + '...' : task.note}
+                                  </span>
+                                </div>
+                              )}
+
+                              {/* Show custom name if exists and not already the main display */}
+                              {hasCustomName && taskDisplayMode !== 'custom' && (
+                                <div className={`flex items-start gap-1 ${
+                                  isSelected ? 'text-blue-100' : 'text-gray-600'
+                                }`}>
+                                  <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                                  </svg>
+                                  <span className="truncate" title={customTaskNames[task.task_id]}>
+                                    {customTaskNames[task.task_id].length > 30 ? customTaskNames[task.task_id].substring(0, 30) + '...' : customTaskNames[task.task_id]}
+                                  </span>
+                                </div>
+                              )}
+
+                              {/* Show filename if not already the main display */}
+                              {task.filename && taskDisplayMode !== 'filename' && (
+                                <div className={`flex items-start gap-1 ${
+                                  isSelected ? 'text-blue-100' : 'text-gray-500'
+                                }`}>
+                                  <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                  </svg>
+                                  <span className="truncate font-mono" title={task.filename}>
+                                    {task.filename.length > 25 ? task.filename.substring(0, 25) + '...' : task.filename}
+                                  </span>
+                                </div>
+                              )}
+
+                              {/* Always show task ID as reference */}
+                              {taskDisplayMode !== 'id' && (
+                                <div className={`flex items-start gap-1 ${
+                                  isSelected ? 'text-blue-200' : 'text-gray-400'
+                                }`}>
+                                  <svg className="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                                  </svg>
+                                  <code className="text-xs font-mono">
+                                    {task.task_id.substring(0, 8)}
+                                  </code>
+                                </div>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )
+              ) : (
+                /* Expanded View - Detailed Table */
+                tasks.length === 0 ? (
+                  <div className="text-center py-8 bg-white rounded-lg border-2 border-dashed border-gray-300">
+                    <svg className="w-12 h-12 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                    </svg>
+                    <p className="text-sm text-gray-500">未找到已完成的任务</p>
+                    <p className="text-xs text-gray-400 mt-1">请先完成一些预测任务</p>
+                  </div>
+                ) : (
+                <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto" style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gradient-to-r from-gray-50 to-gray-100 sticky top-0 z-10">
+                        <tr>
+                          <th className="w-10 px-4 py-3 text-center">
+                            <input
+                              type="checkbox"
+                              checked={selectedTaskIds.length === tasks.length && tasks.length > 0}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedTaskIds(tasks.map(t => t.task_id));
+                                } else {
+                                  setSelectedTaskIds([]);
+                                }
+                              }}
+                              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                            />
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                            任务ID
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                            备注
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                            文件名
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                            自定义名称
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-100">
+                        {tasks.map((task, index) => (
+                          <tr
+                            key={task.task_id}
+                            className={`transition-all duration-150 ${
+                              selectedTaskIds.includes(task.task_id)
+                                ? 'bg-blue-50 hover:bg-blue-100'
+                                : 'hover:bg-gray-50'
+                            }`}
+                          >
+                            <td className="px-4 py-3 text-center">
+                              <input
+                                type="checkbox"
+                                checked={selectedTaskIds.includes(task.task_id)}
+                                onChange={() => handleTaskToggle(task.task_id)}
+                                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-indigo-600 rounded text-white text-xs font-bold flex items-center justify-center">
+                                  {index + 1}
+                                </div>
+                                <code className="text-xs font-mono text-gray-600 bg-gray-100 px-2 py-1 rounded" title={task.task_id}>
+                                  {task.task_id.substring(0, 8)}
+                                </code>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              {editingTaskId === task.task_id ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="text"
+                                    value={editingNote}
+                                    onChange={(e) => setEditingNote(e.target.value)}
+                                    className="flex-1 px-3 py-1.5 text-sm border-2 border-blue-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="输入备注..."
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        handleSaveNote(task.task_id);
+                                      } else if (e.key === 'Escape') {
+                                        handleCancelEdit();
+                                      }
+                                    }}
+                                  />
+                                  <button
+                                    onClick={() => handleSaveNote(task.task_id)}
+                                    className="p-1.5 text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors"
+                                    title="保存 (Enter)"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    onClick={handleCancelEdit}
+                                    className="p-1.5 text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                                    title="取消 (Esc)"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              ) : (
+                                <div
+                                  className="flex items-center gap-2 group cursor-pointer py-1"
+                                  onClick={() => handleStartEditNote(task.task_id, task.note || '')}
+                                >
+                                  {task.note ? (
+                                    <>
+                                      <span className="flex-1 text-sm text-gray-900 line-clamp-1" title={task.note}>
+                                        {task.note}
+                                      </span>
+                                      <svg className="w-3.5 h-3.5 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                      </svg>
+                                    </>
+                                  ) : (
+                                    <span className="flex-1 text-sm text-gray-400 italic group-hover:text-blue-600 transition-colors">
+                                      点击添加备注...
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-2">
+                                <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                <span className="text-sm text-gray-700 truncate max-w-[180px]" title={task.filename}>
+                                  {task.filename}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <input
+                                type="text"
+                                value={customTaskNames[task.task_id] || ''}
+                                onChange={(e) => {
+                                  setCustomTaskNames({
+                                    ...customTaskNames,
+                                    [task.task_id]: e.target.value
+                                  });
+                                }}
+                                placeholder="输入自定义名称..."
+                                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent hover:border-blue-400 transition-colors"
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  </div>
+                )
               )}
-              <span className="text-xs text-gray-500">
-                (How tasks are displayed in charts and lists)
-              </span>
+
+              {/* Tips - Only show when expanded */}
+              {!taskTableCollapsed && (
+                <div className="mt-3 flex items-start gap-2 text-xs text-gray-600 bg-blue-50 border border-blue-200 rounded-lg p-2.5">
+                  <svg className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    <p className="font-medium text-blue-900">使用提示</p>
+                    <ul className="mt-1 space-y-0.5 text-blue-800">
+                      <li>• 点击备注单元格可编辑（Enter 保存，Esc 取消）</li>
+                      <li>• 自定义名称将用于图表中的任务标识显示</li>
+                      <li>• 选择至少 2 个任务后可开始对比分析</li>
+                      <li>• 使用上方按钮切换任务显示方式（ID/备注/文件名/自定义）</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
           {/* Tabs */}
-          <div className="mt-4 border-b border-gray-200">
+          <div className="mt-6 border-b border-gray-200">
             <nav className="-mb-px flex space-x-8">
               <button
                 onClick={() => setActiveTab('new')}
@@ -466,7 +918,7 @@ export default function TaskComparisonPage() {
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
-                  New Comparison
+                  新建对比
                 </div>
               </button>
               <button
@@ -481,9 +933,9 @@ export default function TaskComparisonPage() {
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  History
+                  历史记录
                   {historyList.length > 0 && (
-                    <span className="ml-1 px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded-full">
+                    <span className="ml-1 px-2 py-0.5 text-xs font-semibold bg-purple-100 text-purple-700 rounded-full">
                       {historyList.length}
                     </span>
                   )}
@@ -531,41 +983,12 @@ export default function TaskComparisonPage() {
               {/* Left Panel - Configuration */}
               <div className="lg:col-span-1">
                 <div className="bg-white rounded-lg shadow-sm border p-6 sticky top-4">
-                  <h2 className="text-lg font-semibold text-gray-900 mb-4">Configuration</h2>
-              
-              {/* Task Selection */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Tasks ({selectedTaskIds.length} selected)
-                </label>
-                <div className="max-h-64 overflow-y-auto border rounded-lg divide-y">
-                  {tasks.length === 0 ? (
-                    <p className="p-4 text-sm text-gray-500 text-center">No completed tasks found</p>
-                  ) : (
-                    tasks.map(task => (
-                      <label
-                        key={task.task_id}
-                        className="flex items-start gap-3 p-3 hover:bg-gray-50 cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedTaskIds.includes(task.task_id)}
-                          onChange={() => handleTaskToggle(task.task_id)}
-                          className="mt-1"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-900 truncate">
-                            {task.note || task.task_id.substring(0, 8)}
-                          </p>
-                          <p className="text-xs text-gray-500 truncate">
-                            {new Date(task.created_at).toLocaleString()}
-                          </p>
-                        </div>
-                      </label>
-                    ))
-                  )}
-                </div>
-              </div>
+                  <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                    </svg>
+                    对比配置
+                  </h2>
 
               {/* Target Column Selection */}
               <div className="mb-6">
@@ -839,6 +1262,26 @@ export default function TaskComparisonPage() {
                               )}
                             </div>
 
+                            {/* Task List */}
+                            <div className="mb-2 space-y-1">
+                              {item.task_ids.slice(0, 3).map((taskId: string, idx: number) => {
+                                const taskInfo = getTaskDisplayInfo(taskId);
+                                return (
+                                  <div key={idx} className="flex items-center gap-1 text-xs text-gray-700">
+                                    <span>{taskInfo.icon}</span>
+                                    <span className="truncate" title={taskInfo.name}>
+                                      {taskInfo.name.length > 20 ? taskInfo.name.substring(0, 20) + '...' : taskInfo.name}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                              {item.task_ids.length > 3 && (
+                                <div className="text-xs text-gray-500 pl-4">
+                                  等 {item.task_ids.length} 个任务
+                                </div>
+                              )}
+                            </div>
+
                             {/* Stats */}
                             <div className="flex items-center gap-3 text-xs text-gray-600">
                               <span>{item.n_tasks} tasks</span>
@@ -980,6 +1423,26 @@ export default function TaskComparisonPage() {
                                 )}
                               </div>
 
+                              {/* Task List */}
+                              <div className="mb-2 space-y-1">
+                                {item.task_ids.slice(0, 3).map((taskId: string, idx: number) => {
+                                  const taskInfo = getTaskDisplayInfo(taskId);
+                                  return (
+                                    <div key={idx} className="flex items-center gap-1 text-xs text-gray-700">
+                                      <span>{taskInfo.icon}</span>
+                                      <span className="truncate" title={taskInfo.name}>
+                                        {taskInfo.name.length > 20 ? taskInfo.name.substring(0, 20) + '...' : taskInfo.name}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                                {item.task_ids.length > 3 && (
+                                  <div className="text-xs text-gray-500 pl-4">
+                                    等 {item.task_ids.length} 个任务
+                                  </div>
+                                )}
+                              </div>
+
                               <div className="flex items-center gap-3 text-xs text-gray-600">
                                 <span>{item.n_tasks} tasks</span>
                                 <span>•</span>
@@ -1115,6 +1578,29 @@ export default function TaskComparisonPage() {
                               {col}
                             </span>
                           ))}
+                        </div>
+                      </div>
+
+                      {/* Task List */}
+                      <div className="mb-3 bg-gray-50 rounded-lg p-3">
+                        <div className="text-xs font-medium text-gray-700 mb-2">对比任务：</div>
+                        <div className="space-y-1.5">
+                          {item.task_ids.slice(0, 4).map((taskId: string, idx: number) => {
+                            const taskInfo = getTaskDisplayInfo(taskId);
+                            return (
+                              <div key={idx} className="flex items-center gap-2 text-sm text-gray-700">
+                                <span className="text-base">{taskInfo.icon}</span>
+                                <span className="truncate" title={taskInfo.name}>
+                                  {taskInfo.name.length > 35 ? taskInfo.name.substring(0, 35) + '...' : taskInfo.name}
+                                </span>
+                              </div>
+                            );
+                          })}
+                          {item.task_ids.length > 4 && (
+                            <div className="text-xs text-gray-500 pl-6">
+                              等 {item.task_ids.length} 个任务
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -1310,90 +1796,6 @@ export default function TaskComparisonPage() {
         </div>
       )}
 
-      {/* Custom Name Editor Dialog */}
-      {showCustomNameEditor && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 p-6 max-h-[80vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Edit Custom Task Names</h3>
-              <button
-                onClick={() => setShowCustomNameEditor(false)}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <p className="text-sm text-gray-600 mb-4">
-              Set custom display names for your tasks. These names will be used in charts and lists when "Custom" mode is selected.
-            </p>
-
-            <div className="space-y-3">
-              {tasks.map((task) => (
-                <div key={task.task_id} className="border border-gray-200 rounded-lg p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1">
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Task ID: <span className="text-blue-600 font-mono text-xs">{task.task_id}</span>
-                      </label>
-                      <div className="text-xs text-gray-500 mb-2">
-                        File: {task.filename}
-                        {task.note && <span className="ml-2">• Note: {task.note}</span>}
-                      </div>
-                      <input
-                        type="text"
-                        value={customTaskNames[task.task_id] || ''}
-                        onChange={(e) => {
-                          setCustomTaskNames({
-                            ...customTaskNames,
-                            [task.task_id]: e.target.value
-                          });
-                        }}
-                        placeholder="Enter custom name..."
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                    {customTaskNames[task.task_id] && (
-                      <button
-                        onClick={() => {
-                          const newNames = { ...customTaskNames };
-                          delete newNames[task.task_id];
-                          setCustomTaskNames(newNames);
-                        }}
-                        className="mt-6 text-red-600 hover:text-red-700 transition-colors"
-                        title="Clear custom name"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-6 flex gap-3">
-              <button
-                onClick={() => {
-                  setCustomTaskNames({});
-                }}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Clear All
-              </button>
-              <button
-                onClick={() => setShowCustomNameEditor(false)}
-                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

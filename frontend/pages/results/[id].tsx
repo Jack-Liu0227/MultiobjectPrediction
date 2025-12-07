@@ -7,6 +7,7 @@ import { useRouter } from 'next/router';
 import dynamic from 'next/dynamic';
 import { getResults, getParetoAnalysis, triggerDownload, getTaskStatus, getTaskList } from '@/lib/api';
 import PredictionTraceModal from '@/components/PredictionTraceModal';
+import { taskEvents } from '@/lib/taskEvents';
 
 // 图表加载占位组件
 const ChartLoading = ({ height = 'h-80' }: { height?: string }) => (
@@ -98,6 +99,29 @@ export default function ResultsPage() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // 监听任务更新事件（跨组件同步）
+  useEffect(() => {
+    const handleNoteUpdate = (data: { taskId: string; field?: string; value?: any }) => {
+      // 更新已完成任务列表中的 Note
+      setCompletedTasks(prevTasks =>
+        prevTasks.map(t =>
+          t.task_id === data.taskId ? { ...t, note: data.value } : t
+        )
+      );
+
+      // 如果当前查看的任务被更新，也更新任务配置
+      if (taskConfig?.task_id === data.taskId) {
+        setTaskConfig((prev: any) => prev ? { ...prev, note: data.value } : null);
+      }
+    };
+
+    taskEvents.on('note-updated', handleNoteUpdate);
+
+    return () => {
+      taskEvents.off('note-updated', handleNoteUpdate);
+    };
+  }, [taskConfig]);
 
   const loadCompletedTasks = async () => {
     try {

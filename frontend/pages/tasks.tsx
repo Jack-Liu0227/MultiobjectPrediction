@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { getTaskList, deleteTask, rerunTask, cancelTask } from '../lib/api';
+import { taskEvents } from '../lib/taskEvents';
 
 interface Task {
   task_id: string;
@@ -47,23 +48,18 @@ export default function TasksPage() {
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const pageSize = 20;
 
-  // 备注编辑状态
-  const [editingNoteTaskId, setEditingNoteTaskId] = useState<string | null>(null);
-  const [editingNoteValue, setEditingNoteValue] = useState<string>('');
+  // 编辑状态 - 支持多字段编辑
+  const [editingCell, setEditingCell] = useState<{taskId: string, field: 'note' | 'filename' | 'taskId'} | null>(null);
+  const [editingValue, setEditingValue] = useState<string>('');
 
   // 取消任务状态
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // 如果有 id 参数，加载单个任务详情
-  useEffect(() => {
-    if (id && typeof id === 'string') {
-      loadTaskDetail(id);
-    } else {
-      loadTasks();
-    }
-  }, [id, page, statusFilter]);
+  // 客户端挂载状态（避免 hydration 错误）
+  const [mounted, setMounted] = useState(false);
 
+  // 函数定义必须在所有 hooks 之前或之后，不能在条件返回之后
   const loadTaskDetail = async (taskId: string) => {
     setLoading(true);
     setError(null);
@@ -241,64 +237,182 @@ export default function TasksPage() {
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '-';
     const date = new Date(dateStr);
-    return date.toLocaleString('zh-CN');
+    return date.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
   };
 
-  // 开始编辑备注
-  const handleStartEditNote = (task: Task) => {
-    setEditingNoteTaskId(task.task_id);
-    setEditingNoteValue(task.note || '');
-  };
-
-  // 保存备注
-  const handleSaveNote = async (taskId: string) => {
-    try {
-      const response = await fetch(`http://localhost:8000/api/tasks/${taskId}/note`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ note: editingNoteValue }),
-      });
-
-      if (!response.ok) {
-        throw new Error('更新备注失败');
-      }
-
-      // 更新本地任务列表
-      setTasks(tasks.map(t =>
-        t.task_id === taskId ? { ...t, note: editingNoteValue } : t
-      ));
-
-      setEditingNoteTaskId(null);
-      setEditingNoteValue('');
-    } catch (err: any) {
-      alert(err.message || '更新备注失败');
+  // 开始编辑单元格
+  const handleStartEdit = (task: Task, field: 'note' | 'filename' | 'taskId') => {
+    setEditingCell({ taskId: task.task_id, field });
+    if (field === 'note') {
+      setEditingValue(task.note || '');
+    } else if (field === 'filename') {
+      setEditingValue(task.filename || '');
+    } else if (field === 'taskId') {
+      setEditingValue(task.task_id || '');
     }
   };
 
-  // 取消编辑备注
-  const handleCancelEditNote = () => {
-    setEditingNoteTaskId(null);
-    setEditingNoteValue('');
+  // 保存编辑
+  const handleSaveEdit = async () => {
+    if (!editingCell) return;
+
+    const { taskId, field } = editingCell;
+
+    try {
+      if (field === 'note') {
+        // 保存备注
+        const response = await fetch(`http://localhost:8000/api/tasks/${taskId}/note`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ note: editingValue }),
+        });
+
+        if (!response.ok) {
+          throw new Error('更新备注失败');
+        }
+
+        // 更新本地任务列表
+        setTasks(tasks.map(t =>
+          t.task_id === taskId ? { ...t, note: editingValue } : t
+        ));
+
+        // 如果当前正在查看此任务详情，也需要更新
+        if (selectedTask?.task_id === taskId) {
+          setSelectedTask({ ...selectedTask, note: editingValue });
+        }
+
+        // 触发事件，通知其他组件更新
+        taskEvents.emit('note-updated', {
+          taskId,
+          field: 'note',
+          value: editingValue,
+        });
+      }
+      // TaskID 和 Filename 暂不支持修改（只读展示）
+      // 如需支持，需要添加相应的后端 API
+
+      setEditingCell(null);
+      setEditingValue('');
+    } catch (err: any) {
+      alert(err.message || '更新失败');
+    }
   };
+
+  // 取消编辑
+  const handleCancelEdit = () => {
+    setEditingCell(null);
+    setEditingValue('');
+  };
+
+  // 处理键盘事件
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSaveEdit();
+    } else if (e.key === 'Escape') {
+      handleCancelEdit();
+    }
+  };
+
+  // Hooks 必须在所有函数定义之后，但在任何条件返回之前
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // 如果有 id 参数，加载单个任务详情
+  useEffect(() => {
+    if (!mounted) return; // 等待客户端挂载
+
+    if (id && typeof id === 'string') {
+      loadTaskDetail(id);
+    } else {
+      loadTasks();
+    }
+  }, [id, page, statusFilter, mounted]);
+
+  // 监听任务更新事件（跨组件同步）
+  useEffect(() => {
+    const handleNoteUpdate = (data: { taskId: string; field?: string; value?: any }) => {
+      // 更新任务列表中的 Note
+      setTasks(prevTasks =>
+        prevTasks.map(t =>
+          t.task_id === data.taskId ? { ...t, note: data.value } : t
+        )
+      );
+
+      // 如果当前正在查看此任务详情，也需要更新
+      if (selectedTask?.task_id === data.taskId) {
+        setSelectedTask(prev => prev ? { ...prev, note: data.value } : null);
+      }
+    };
+
+    taskEvents.on('note-updated', handleNoteUpdate);
+
+    return () => {
+      taskEvents.off('note-updated', handleNoteUpdate);
+    };
+  }, [selectedTask]);
+
+  // 在客户端挂载之前不渲染任何内容，避免 hydration 错误
+  if (!mounted) {
+    return null;
+  }
 
   const totalPages = Math.ceil(total / pageSize);
 
   // 如果是查看单个任务详情
   if (id && selectedTask) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="mb-6">
-          <button
-            onClick={() => router.push('/tasks')}
-            className="mb-4 text-blue-600 hover:text-blue-800 flex items-center gap-2"
-          >
-            ← 返回任务列表
-          </button>
-          <h1 className="text-3xl font-bold mb-2">任务详情</h1>
-          <p className="text-gray-600">任务 ID: {selectedTask.task_id}</p>
-        </div>
+      <div className="min-h-screen bg-gray-50">
+        {/* 顶部导航栏 */}
+        <header className="bg-white shadow-sm border-b">
+          <div className="max-w-7xl mx-auto px-4 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                {/* 返回任务列表按钮 */}
+                <button
+                  onClick={() => router.push('/tasks')}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="返回任务列表"
+                >
+                  <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                  </svg>
+                </button>
+                <div>
+                  <h1 className="text-2xl font-bold text-gray-900">任务详情</h1>
+                  <p className="text-sm text-gray-500 mt-1">任务 ID: {selectedTask.task_id}</p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => router.push('/prediction')}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                >
+                  🔮 新建预测
+                </button>
+                <button
+                  onClick={() => router.push('/tasks')}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors"
+                >
+                  📋 任务列表
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* 主内容区域 */}
+        <div className="max-w-7xl mx-auto px-4 py-8">
 
         {/* 错误提示 */}
         {error && (
@@ -365,16 +479,22 @@ export default function TasksPage() {
               <h3 className="text-sm font-semibold text-blue-700 mb-2 border-b border-blue-200 pb-1">📁 基本信息</h3>
               <div>
                 <span className="text-gray-500 text-xs">任务ID:</span>
-                <span className="font-mono text-xs text-gray-800 block mt-0.5 truncate" title={selectedTask.task_id}>{selectedTask.task_id}</span>
+                <div className="font-mono text-xs text-gray-800 mt-0.5 break-all bg-white p-2 rounded border border-gray-200">
+                  {selectedTask.task_id}
+                </div>
               </div>
               <div>
                 <span className="text-gray-500 text-xs">文件名:</span>
-                <span className="font-medium text-sm block mt-0.5 truncate" title={selectedTask.filename}>{selectedTask.filename}</span>
+                <div className="font-medium text-sm mt-0.5 break-words bg-white p-2 rounded border border-gray-200">
+                  {selectedTask.filename}
+                </div>
               </div>
               {selectedTask.note && (
                 <div>
                   <span className="text-gray-500 text-xs">备注:</span>
-                  <span className="font-medium text-sm block mt-0.5">{selectedTask.note}</span>
+                  <div className="font-medium text-sm mt-0.5 break-words bg-white p-2 rounded border border-gray-200 whitespace-pre-wrap">
+                    {selectedTask.note}
+                  </div>
                 </div>
               )}
             </div>
@@ -502,34 +622,55 @@ export default function TasksPage() {
             删除任务
           </button>
         </div>
+        </div>
       </div>
     );
   }
 
   // 任务列表视图
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">任务历史</h1>
-          <p className="text-gray-600">查看和管理所有预测任务</p>
+    <div className="min-h-screen bg-gray-50">
+      {/* 顶部导航栏 */}
+      <header className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              {/* 返回预测主页面按钮 */}
+              <button
+                onClick={() => router.push('/prediction')}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                title="返回预测主页面"
+              >
+                <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+              </button>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">任务历史</h1>
+                <p className="text-sm text-gray-500 mt-1">查看和管理所有预测任务</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => router.push('/prediction')}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+              >
+                🔮 新建预测
+              </button>
+              <button
+                onClick={() => router.push('/task-comparison')}
+                className="px-4 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-200 transition-colors"
+                title="对比多个任务的预测结果"
+              >
+                📊 任务对比
+              </button>
+            </div>
+          </div>
         </div>
-        <div className="flex gap-3">
-          <button
-            onClick={() => router.push('/prediction')}
-            className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-200"
-          >
-            🔮 新建预测
-          </button>
-          <button
-            onClick={() => router.push('/task-comparison')}
-            className="px-4 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-200"
-            title="对比多个任务的预测结果"
-          >
-            📊 任务对比
-          </button>
-        </div>
-      </div>
+      </header>
+
+      {/* 主内容区域 */}
+      <div className="max-w-7xl mx-auto px-4 py-8">
 
       {/* 成功提示消息 */}
       {successMessage && (
@@ -629,7 +770,7 @@ export default function TasksPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left">
+                <th className="px-4 py-3 text-left w-12">
                   <input
                     type="checkbox"
                     checked={selectedTaskIds.size === tasks.length && tasks.length > 0}
@@ -637,39 +778,43 @@ export default function TasksPage() {
                     className="rounded border-gray-300"
                   />
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">
                   状态
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase min-w-[280px]">
+                  任务ID
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase min-w-[180px]">
                   文件名
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  目标列
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  模型
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  配置参数
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  创建时间
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  完成时间
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase min-w-[200px]">
                   备注
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase min-w-[120px]">
+                  目标列
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">
+                  模型
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">
+                  配置参数
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-36">
+                  创建时间
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-36">
+                  完成时间
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase min-w-[300px]">
                   操作
                 </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {tasks.map((task) => (
-                <tr key={task.task_id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4">
+                <tr key={task.task_id} className="group hover:bg-gray-50">
+                  {/* 复选框 */}
+                  <td className="px-4 py-4">
                     <input
                       type="checkbox"
                       checked={selectedTaskIds.has(task.task_id)}
@@ -677,34 +822,115 @@ export default function TasksPage() {
                       className="rounded border-gray-300"
                     />
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+
+                  {/* 状态 */}
+                  <td className="px-4 py-4 whitespace-nowrap">
                     {getStatusBadge(task.status)}
                     {task.progress !== undefined && task.status === 'running' && (
                       <div className="mt-1 text-xs text-gray-500">
                         {Math.round(task.progress * 100)}%
                       </div>
                     )}
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="text-sm font-medium text-gray-900">
-                      {task.filename}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      任务ID: {task.task_id}
-                    </div>
-                    {/* 只在 failed 状态下显示错误信息 */}
                     {task.status === 'failed' && task.error && (
-                      <div className="text-xs text-red-600 mt-1">
-                        {task.error}
+                      <div className="text-xs text-red-600 mt-1" title={task.error}>
+                        错误
                       </div>
                     )}
                   </td>
-                  <td className="px-6 py-4">
-                    <div className="text-sm text-gray-900">
+
+                  {/* 任务ID - 完整显示，可双击复制 */}
+                  <td className="px-4 py-4">
+                    <div
+                      className="font-mono text-xs text-gray-700 cursor-pointer hover:bg-blue-50 px-2 py-1 rounded break-all"
+                      onDoubleClick={() => {
+                        navigator.clipboard.writeText(task.task_id);
+                        alert('任务ID已复制到剪贴板');
+                      }}
+                      title="双击复制完整任务ID"
+                    >
+                      {task.task_id}
+                    </div>
+                  </td>
+
+                  {/* 文件名 - 完整显示 */}
+                  <td className="px-4 py-4">
+                    <div
+                      className="text-sm font-medium text-gray-900 break-words"
+                      title={task.filename}
+                    >
+                      {task.filename}
+                    </div>
+                  </td>
+
+                  {/* 备注 - 可双击编辑 */}
+                  <td className="px-4 py-4">
+                    {editingCell?.taskId === task.task_id && editingCell?.field === 'note' ? (
+                      <div className="flex items-center gap-2">
+                        <textarea
+                          value={editingValue}
+                          onChange={(e) => setEditingValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              handleSaveEdit();
+                            } else if (e.key === 'Escape') {
+                              handleCancelEdit();
+                            }
+                          }}
+                          className="flex-1 px-2 py-1 border border-blue-500 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                          placeholder="输入备注..."
+                          maxLength={500}
+                          rows={2}
+                          autoFocus
+                        />
+                        <div className="flex flex-col gap-1">
+                          <button
+                            onClick={handleSaveEdit}
+                            className="text-green-600 hover:text-green-900 text-lg"
+                            title="保存 (Enter)"
+                          >
+                            ✓
+                          </button>
+                          <button
+                            onClick={handleCancelEdit}
+                            className="text-red-600 hover:text-red-900 text-lg"
+                            title="取消 (Esc)"
+                          >
+                            ✗
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        className="flex items-center gap-2 cursor-pointer hover:bg-blue-50 px-2 py-1 rounded min-h-[32px]"
+                        onDoubleClick={() => handleStartEdit(task, 'note')}
+                        title="双击编辑备注"
+                      >
+                        <span className="flex-1 break-words whitespace-pre-wrap text-sm">
+                          {task.note || <span className="text-gray-400">点击编辑...</span>}
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStartEdit(task, 'note');
+                          }}
+                          className="text-blue-600 hover:text-blue-900 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                          title="编辑备注"
+                        >
+                          ✏️
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                  {/* 目标列 */}
+                  <td className="px-4 py-4">
+                    <div className="text-sm text-gray-900 break-words">
                       {task.target_columns?.join(', ') || '-'}
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+
+                  {/* 模型 */}
+                  <td className="px-4 py-4 whitespace-nowrap">
                     <div className="text-sm text-gray-900">
                       {task.model_provider || '-'}
                     </div>
@@ -712,7 +938,9 @@ export default function TasksPage() {
                       {task.model_name || '-'}
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+
+                  {/* 配置参数 */}
+                  <td className="px-4 py-4 whitespace-nowrap">
                     <div className="relative group">
                       <div className="text-xs text-gray-700 cursor-pointer hover:text-blue-600">
                         <span className="font-medium">{task.sample_size || '-'}</span>
@@ -758,54 +986,19 @@ export default function TasksPage() {
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+
+                  {/* 创建时间 */}
+                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
                     {formatDate(task.created_at)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+
+                  {/* 完成时间 */}
+                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
                     {formatDate(task.completed_at)}
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-900">
-                    {editingNoteTaskId === task.task_id ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={editingNoteValue}
-                          onChange={(e) => setEditingNoteValue(e.target.value)}
-                          className="flex-1 px-2 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          placeholder="输入备注..."
-                          maxLength={200}
-                        />
-                        <button
-                          onClick={() => handleSaveNote(task.task_id)}
-                          className="text-green-600 hover:text-green-900"
-                          title="保存"
-                        >
-                          ✓
-                        </button>
-                        <button
-                          onClick={handleCancelEditNote}
-                          className="text-red-600 hover:text-red-900"
-                          title="取消"
-                        >
-                          ✗
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <span className="flex-1 truncate" title={task.note || ''}>
-                          {task.note || '-'}
-                        </span>
-                        <button
-                          onClick={() => handleStartEditNote(task)}
-                          className="text-blue-600 hover:text-blue-900"
-                          title="编辑备注"
-                        >
-                          ✏️
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 text-sm font-medium">
+
+                  {/* 操作 */}
+                  <td className="px-4 py-4 text-sm font-medium">
                     <div className="flex gap-2 flex-wrap min-w-[300px]">
                       {task.result_id && (
                         <button
@@ -884,6 +1077,7 @@ export default function TasksPage() {
           </button>
         </div>
       )}
+      </div>
     </div>
   );
 }
