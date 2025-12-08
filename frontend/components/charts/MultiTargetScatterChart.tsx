@@ -73,7 +73,7 @@ const getConsistencyLabel = (level: number, nTasks: number): string => {
   }
 };
 
-export default function MultiTargetScatterChart({
+const MultiTargetScatterChart = React.memo(function MultiTargetScatterChart({
   comparisonData,
   taskNames,
 }: MultiTargetScatterChartProps) {
@@ -304,5 +304,7 @@ export default function MultiTargetScatterChart({
       ))}
     </div>
   );
-}
+});
+
+export default MultiTargetScatterChart;
 

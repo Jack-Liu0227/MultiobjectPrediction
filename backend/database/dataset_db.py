@@ -11,7 +11,7 @@ import logging
 import hashlib
 from pathlib import Path
 
-from database.models import Dataset, SessionLocal, init_db
+from .models import Dataset, SessionLocal, init_db, get_db_session
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +27,14 @@ class DatasetDatabase:
     def create_dataset(self, dataset_data: Dict[str, Any]) -> str:
         """
         创建新数据集记录
-        
+
         Args:
             dataset_data: 数据集数据字典
-            
+
         Returns:
             dataset_id: 数据集ID
         """
-        db = SessionLocal()
-        try:
+        with get_db_session() as db:
             dataset = Dataset(
                 dataset_id=dataset_data["dataset_id"],
                 filename=dataset_data["filename"],
@@ -50,41 +49,29 @@ class DatasetDatabase:
                 tags=dataset_data.get("tags", []),
                 uploaded_at=datetime.now()
             )
-            
+
             db.add(dataset)
-            db.commit()
-            db.refresh(dataset)
-            
+            db.flush()
+
             logger.info(f"Created dataset: {dataset.dataset_id}")
             return dataset.dataset_id
-            
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Failed to create dataset: {e}", exc_info=True)
-            raise
-        finally:
-            db.close()
     
     def get_dataset(self, dataset_id: str) -> Optional[Dict[str, Any]]:
         """
         获取数据集信息
-        
+
         Args:
             dataset_id: 数据集ID
-            
+
         Returns:
             数据集信息字典，不存在返回 None
         """
-        db = SessionLocal()
-        try:
+        with get_db_session() as db:
             dataset = db.query(Dataset).filter(Dataset.dataset_id == dataset_id).first()
             if not dataset:
                 return None
-            
+
             return self._dataset_to_dict(dataset)
-            
-        finally:
-            db.close()
     
     def list_datasets(
         self,
@@ -95,74 +82,61 @@ class DatasetDatabase:
     ) -> Dict[str, Any]:
         """
         列出数据集（支持分页）
-        
+
         Args:
             page: 页码（从1开始）
             page_size: 每页数量
             sort_by: 排序字段
             sort_order: 排序顺序（asc/desc）
-            
+
         Returns:
             {"datasets": [...], "total": 100}
         """
-        db = SessionLocal()
-        try:
+        with get_db_session() as db:
             # 构建查询
             query = db.query(Dataset)
-            
+
             # 总数
             total = query.count()
-            
+
             # 排序
             sort_column = getattr(Dataset, sort_by, Dataset.uploaded_at)
             if sort_order == "desc":
                 query = query.order_by(desc(sort_column))
             else:
                 query = query.order_by(asc(sort_column))
-            
+
             # 分页
             offset = (page - 1) * page_size
             datasets = query.offset(offset).limit(page_size).all()
-            
+
             return {
                 "datasets": [self._dataset_to_dict(ds) for ds in datasets],
                 "total": total
             }
-            
-        finally:
-            db.close()
-    
+
     def update_dataset(self, dataset_id: str, updates: Dict[str, Any]) -> bool:
         """
         更新数据集信息
-        
+
         Args:
             dataset_id: 数据集ID
             updates: 更新字段字典
-            
+
         Returns:
             是否更新成功
         """
-        db = SessionLocal()
-        try:
+        with get_db_session() as db:
             dataset = db.query(Dataset).filter(Dataset.dataset_id == dataset_id).first()
             if not dataset:
                 return False
-            
+
             for key, value in updates.items():
                 if hasattr(dataset, key):
                     setattr(dataset, key, value)
 
-            db.commit()
             logger.info(f"Updated dataset: {dataset_id}")
             return True
-
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Failed to update dataset {dataset_id}: {e}", exc_info=True)
-            raise
-        finally:
-            db.close()
 
     def delete_dataset(self, dataset_id: str) -> bool:
         """
@@ -174,38 +148,22 @@ class DatasetDatabase:
         Returns:
             是否删除成功
         """
-        db = SessionLocal()
-        try:
+        with get_db_session() as db:
             dataset = db.query(Dataset).filter(Dataset.dataset_id == dataset_id).first()
             if not dataset:
                 return False
 
             db.delete(dataset)
-            db.commit()
             logger.info(f"Deleted dataset: {dataset_id}")
             return True
 
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Failed to delete dataset {dataset_id}: {e}", exc_info=True)
-            raise
-        finally:
-            db.close()
-
     def increment_usage(self, dataset_id: str):
         """增加数据集使用次数"""
-        db = SessionLocal()
-        try:
+        with get_db_session() as db:
             dataset = db.query(Dataset).filter(Dataset.dataset_id == dataset_id).first()
             if dataset:
                 dataset.usage_count += 1
                 dataset.last_used_at = datetime.now()
-                db.commit()
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Failed to increment usage for {dataset_id}: {e}")
-        finally:
-            db.close()
 
     def _dataset_to_dict(self, dataset: Dataset) -> Dict[str, Any]:
         """将 Dataset 对象转换为字典"""

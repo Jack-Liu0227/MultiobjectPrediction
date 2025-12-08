@@ -39,9 +39,9 @@ async def upload_file(file: UploadFile = File(...)):
         
         # 读取文件内容
         content = await file.read()
-        
-        # 保存文件
-        file_id, file_path = file_handler.save_uploaded_file(content, file.filename)
+
+        # 保存文件（异步）
+        file_id, file_path = await file_handler.save_uploaded_file(content, file.filename)
         
         # 获取文件信息
         file_info = file_handler.get_file_info(file_path)

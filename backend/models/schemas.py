@@ -96,6 +96,9 @@ class ResultsResponse(BaseModel):
     predictions: List[Dict]
     metrics: Dict[str, PredictionMetrics]
     execution_time: float
+    total_count: Optional[int] = None  # 总记录数（分页时使用）
+    page: Optional[int] = None  # 当前页码
+    page_size: Optional[int] = None  # 每页数量
 
 
 class TaskInfo(BaseModel):

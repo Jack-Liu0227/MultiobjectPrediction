@@ -1,8 +1,9 @@
 /**
  * 结果展示页面
+ * 使用 AbortController 实现请求取消机制
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import dynamic from 'next/dynamic';
 import { getResults, getParetoAnalysis, triggerDownload, getTaskStatus, getTaskList } from '@/lib/api';
@@ -81,19 +82,34 @@ export default function ResultsPage() {
   const [showTaskSelector, setShowTaskSelector] = useState(false);
   const taskSelectorRef = useRef<HTMLDivElement>(null);
 
+  // AbortController 用于取消请求
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // 使用 useCallback 确保函数引用稳定，避免重复创建定时器
+  const stopPolling = useCallback(() => {
+    setIsPolling(false);
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     if (id) {
       checkTaskStatusAndLoadResults(id as string);
       loadTaskConfig();
     }
 
-    // 清理轮询
+    // 清理函数：组件卸载时取消请求和清理定时器
     return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
+      // 取消所有未完成的请求
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
+      // 清理轮询定时器
+      stopPolling();
     };
-  }, [id]);
+  }, [id, stopPolling]);
 
   // 加载已完成任务列表（用于任务切换）
   useEffect(() => {
@@ -184,12 +200,28 @@ export default function ResultsPage() {
       setLoading(true);
       setError(null);
 
-      // 并行加载所有数据（优化加载速度）
+      // 取消之前的请求
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      // 创建新的 AbortController
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+
+      // 并行加载所有数据（优化加载速度，支持请求取消）
       const [processDetailsResponse, resultsData, paretoData] = await Promise.all([
-        fetch(`http://localhost:8000/api/results/${resultId}/process_details.json`),
+        fetch(`http://localhost:8000/api/results/${resultId}/process_details.json`, {
+          signal: abortController.signal, // 添加取消信号
+        }),
         getResults(resultId),
         getParetoAnalysis(resultId).catch(() => null), // Pareto 可能不存在，忽略错误
       ]);
+
+      // 检查请求是否被取消
+      if (abortController.signal.aborted) {
+        return;
+      }
 
       // 处理 process_details
       if (!processDetailsResponse.ok) {
@@ -232,6 +264,11 @@ export default function ResultsPage() {
       // 数据加载完成后，预加载图表组件
       preloadCharts();
     } catch (err: any) {
+      // 忽略 AbortError（请求被取消）
+      if (err.name === 'AbortError') {
+        console.log('请求已取消');
+        return;
+      }
       setError(err.message || '加载结果失败');
       setLoading(false);
     }
@@ -264,14 +301,6 @@ export default function ResultsPage() {
         console.error('轮询任务状态失败:', err);
       }
     }, 3000);
-  };
-
-  const stopPolling = () => {
-    setIsPolling(false);
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-    }
   };
 
   const handleDownload = async () => {

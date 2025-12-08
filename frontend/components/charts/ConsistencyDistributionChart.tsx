@@ -28,7 +28,7 @@ interface ConsistencyDistributionChartProps {
   nTasks: number;
 }
 
-export default function ConsistencyDistributionChart({
+const ConsistencyDistributionChart = React.memo(function ConsistencyDistributionChart({
   consistencyDistribution,
   nTasks,
 }: ConsistencyDistributionChartProps) {
@@ -148,5 +148,7 @@ export default function ConsistencyDistributionChart({
       </div>
     </div>
   );
-}
+});
+
+export default ConsistencyDistributionChart;
 

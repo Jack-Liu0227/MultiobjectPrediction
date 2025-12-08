@@ -3,7 +3,7 @@
  * Compare prediction results across multiple tasks
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { getTaskList, compareTasksAPI, saveComparisonAPI, getComparisonHistoryAPI, getComparisonDetailAPI, deleteComparisonAPI } from '@/lib/api';
 import MultiTargetScatterChart from '@/components/charts/MultiTargetScatterChart';
@@ -108,51 +108,66 @@ export default function TaskComparisonPage() {
     }
   }, []);
 
-  // Save task table collapsed state to localStorage
-  useEffect(() => {
-    if (mounted) {
-      localStorage.setItem('taskComparisonTableCollapsed', JSON.stringify(taskTableCollapsed));
-    }
-  }, [taskTableCollapsed, mounted]);
+  // 防抖保存到 localStorage
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Save task display mode to localStorage
+  const debouncedSaveToLocalStorage = useCallback((key: string, value: any) => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    saveTimeoutRef.current = setTimeout(() => {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(key, JSON.stringify(value));
+      }
+    }, 500); // 500ms 防抖延迟
+  }, []);
+
+  // Save task table collapsed state to localStorage (with debounce)
   useEffect(() => {
     if (mounted) {
-      localStorage.setItem('taskComparisonDisplayMode', taskDisplayMode);
+      debouncedSaveToLocalStorage('taskComparisonTableCollapsed', taskTableCollapsed);
     }
-  }, [taskDisplayMode, mounted]);
+  }, [taskTableCollapsed, mounted, debouncedSaveToLocalStorage]);
+
+  // Save task display mode to localStorage (with debounce)
+  useEffect(() => {
+    if (mounted) {
+      debouncedSaveToLocalStorage('taskComparisonDisplayMode', taskDisplayMode);
+    }
+  }, [taskDisplayMode, mounted, debouncedSaveToLocalStorage]);
 
   // 监听任务更新事件（跨组件同步）
-  useEffect(() => {
-    const handleNoteUpdate = (data: { taskId: string; field?: string; value?: any }) => {
-      // 更新任务列表中的 Note
-      setTasks(prevTasks =>
-        prevTasks.map(t =>
-          t.task_id === data.taskId ? { ...t, note: data.value } : t
-        )
-      );
-    };
+  // 使用 useCallback 确保事件处理器引用稳定，避免重复注册
+  const handleNoteUpdate = useCallback((data: { taskId: string; field?: string; value?: any }) => {
+    // 更新任务列表中的 Note
+    setTasks(prevTasks =>
+      prevTasks.map(t =>
+        t.task_id === data.taskId ? { ...t, note: data.value } : t
+      )
+    );
+  }, []);
 
+  useEffect(() => {
     taskEvents.on('note-updated', handleNoteUpdate);
 
     return () => {
       taskEvents.off('note-updated', handleNoteUpdate);
     };
-  }, []);
+  }, [handleNoteUpdate]);
 
-  // Save sidebar state to localStorage
+  // Save sidebar state to localStorage (with debounce)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('taskComparisonSidebarOpen', JSON.stringify(sidebarOpen));
+    if (mounted) {
+      debouncedSaveToLocalStorage('taskComparisonSidebarOpen', sidebarOpen);
     }
-  }, [sidebarOpen]);
+  }, [sidebarOpen, mounted, debouncedSaveToLocalStorage]);
 
-  // Save custom task names to localStorage
+  // Save custom task names to localStorage (with debounce)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('taskComparisonCustomNames', JSON.stringify(customTaskNames));
+    if (mounted) {
+      debouncedSaveToLocalStorage('taskComparisonCustomNames', customTaskNames);
     }
-  }, [customTaskNames]);
+  }, [customTaskNames, mounted, debouncedSaveToLocalStorage]);
 
   const loadTasks = async () => {
     try {

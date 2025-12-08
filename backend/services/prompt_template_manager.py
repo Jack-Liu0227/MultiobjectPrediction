@@ -33,94 +33,58 @@ class PromptTemplateManager:
         self._ensure_default_templates()
     
     def _ensure_default_templates(self):
-        """确保默认模板存在"""
-        # 默认列名映射
-        default_column_mapping = {
-            "Processing": "Heat treatment method",
-            "Composition": "Alloy Composition"
-        }
+        """确保默认模板存在（统一格式 UNIFIED_PROTOCOL）"""
+        from textwrap import dedent
 
-        default_single_target = {
-            "template_name": "默认单目标模板",
-            "template_type": "single_target",
-            "description": "用于单目标预测的默认模板",
-            "system_role": "You are a materials science expert specializing in predicting material properties.",
-            "task_description": "Predict {target_property} for the target material using systematic analysis.",
-            "input_format": "**Target Material**:\n{test_sample}",
-            "output_format": """**Final Prediction**:
-```json
-{{
-    "predicted_value": <number>,
-    "unit": "{unit}",
-    "confidence": "<high/medium/low>",
-    "reasoning": "<brief explanation>"
-}}
-```""",
-            "reference_format": "**Reference Samples**:\n\n{reference_samples}",
-            "analysis_protocol": """**Required Analysis Protocol**:
+        # 默认列名映射（空字典，由前端根据实际数据集动态生成）
+        default_column_mapping = {}
 
-1. **Reference-Driven Baseline Establishment**:
-   - **Classification**: Classify the general family of all materials.
-   - **Primary Baseline Selection**: Identify the most analogous sample from references.
-   - **Sanity Check**: Use general knowledge of standard materials as secondary check.
-
-2. **Plausibility Assessment**:
-   - Assess the expected range based on your selected baseline sample.
-   - State clearly whether the prediction is plausible relative to this reference point.
-
-3. **Final Prediction**:
-   - Provide a single numerical value.
-   - Include confidence level and brief reasoning.""",
-            "column_name_mapping": default_column_mapping,
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
-        }
-        
-        default_multi_target = {
-            "template_name": "默认多目标模板",
-            "template_type": "multi_target",
-            "description": "用于多目标预测的默认模板",
-            "system_role": "You are a materials science expert specializing in predicting multiple material properties simultaneously.",
+        # UNIFIED_PROTOCOL 格式的默认模板
+        default_unified = {
+            "template_name": "默认统一模板",
+            "template_type": "unified",
+            "description": "基于 FEW-SHOT AUGMENTED CORRECTION PROTOCOL 的统一模板",
+            "system_role": "",
             "task_description": "Predict {target_properties_list} for the target material using systematic analysis.",
             "input_format": "**Target Material**:\n{test_sample}",
-            "output_format": """**Final Predictions**:
-```json
-{{
-    "predictions": {{
-        {predictions_json_template}
-    }},
-    "confidence": "<high/medium/low>",
-    "reasoning": "<brief explanation>"
-}}
-```""",
-            "reference_format": "**Reference Samples**:\n\nEach sample shows values for all {num_targets} target properties.\n\n{reference_samples}",
-            "analysis_protocol": """**Required Analysis Protocol**:
+            "output_format": dedent("""
+                Provide your systematic analysis and end with EXACTLY this JSON format:
 
-1. **Reference-Driven Baseline Establishment**:
-   - **Classification**: Classify the general family of all materials.
-   - **Primary Baseline Selection**: Identify the most analogous sample from references.
-   - **Sanity Check**: Use general knowledge of standard materials as secondary check.
+                {{
+                  "predictions": {{
+                    {predictions_json_template}
+                  }},
+                  "confidence": "<high/medium/low>",
+                  "reasoning": "<your_analysis_summary>"
+                }}
+            """).strip(),
+            "reference_format": "**Reference Samples**:\n\nEach sample shows values for all target properties.\n\n{reference_samples}",
+            "analysis_protocol": dedent("""
+                **Required Analysis Protocol**:
 
-2. **Multi-Property Correlation Analysis**:
-   - Analyze relationships between target properties.
-   - Consider trade-offs and dependencies.
+                1. **Reference-Driven Baseline Establishment**:
+                   - **Classification**: First, classify the general family of all materials involved (references and target).
+                   - **Primary Baseline Selection**: From the provided `Reference Samples`, identify the single sample that is the **most analogous** to the `Target Material`. This sample and its `Known True Values` will serve as your **primary baseline**. Justify your choice.
+                   - **Sanity Check (Optional but Recommended)**: Use your general knowledge of standard materials as a secondary check.
 
-3. **Final Predictions**:
-   - Provide numerical values for all target properties.
-   - Include confidence level and brief reasoning.""",
+                2. **Plausibility Assessment**:
+                   - Assess the expected range for each target property based on your selected **primary baseline sample**.
+                   - Consider the relationships between properties when applicable (e.g., strength-ductility trade-offs).
+
+                3. **Interpolative Correction & Justification**:
+                   - Formulate corrected values for each property.
+                   - Your reasoning must be an **interpolation or extrapolation** from the primary baseline. Quantify how the **differences in characteristics** between the target and the baseline sample translate into specific property adjustments.
+                   - Use fundamental materials principles to support *why* these differences lead to your calculated adjustments.
+            """).strip(),
             "column_name_mapping": default_column_mapping,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat()
         }
-        
-        # 保存默认模板（如果不存在）
-        single_target_path = self.templates_dir / "default_single_target.json"
-        if not single_target_path.exists():
-            self.save_template("default_single_target", default_single_target)
-        
-        multi_target_path = self.templates_dir / "default_multi_target.json"
-        if not multi_target_path.exists():
-            self.save_template("default_multi_target", default_multi_target)
+
+        # 保存统一默认模板（如果不存在）
+        unified_path = self.templates_dir / "default_unified.json"
+        if not unified_path.exists():
+            self.save_template("default_unified", default_unified)
     
     def save_template(self, template_id: str, template_data: Dict) -> bool:
         """
@@ -149,8 +113,8 @@ class PromptTemplateManager:
                     logger.error(f"缺少必填字段: {field_name} ({field})")
                     return False
 
-            # 验证模板类型
-            valid_types = ['single_target', 'multi_target']
+            # 验证模板类型（仅支持统一格式）
+            valid_types = ['unified']
             if template_data['template_type'] not in valid_types:
                 logger.error(f"无效的模板类型: {template_data['template_type']}，必须是 {valid_types} 之一")
                 return False
@@ -206,17 +170,14 @@ class PromptTemplateManager:
         获取默认的列名映射
 
         注意：
-        - "Processing" 和 "Processing_Description" 是工艺列的映射
-        - 其他列（特征列、目标属性列）需要单独映射
-        - "Composition" 不需要映射,因为它已经是显示名称
+        - 返回空字典，因为列名映射应该由前端根据实际数据集动态生成
+        - 前端会根据用户选择的列名（如 "Processing_Description"）生成映射
+        - 这样可以支持任意的列名，而不是硬编码特定的列名
 
         Returns:
-            默认列名映射字典
+            默认列名映射字典（空字典）
         """
-        return {
-            "Processing": "Heat treatment method",
-            "Processing_Description": "Heat treatment method"
-        }
+        return {}
 
     def list_templates(self) -> List[Dict]:
         """

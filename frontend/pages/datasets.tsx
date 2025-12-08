@@ -1,9 +1,11 @@
 /**
  * 数据集管理页面
+ * 使用 SWR 实现请求缓存和优化
  */
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
+import { useDatasetList } from '../lib/hooks/useSWRApi';
 
 interface Dataset {
   dataset_id: string;
@@ -22,10 +24,7 @@ interface Dataset {
 
 export default function DatasetsPage() {
   const router = useRouter();
-  const [datasets, setDatasets] = useState<Dataset[]>([]);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -33,24 +32,23 @@ export default function DatasetsPage() {
   const [uploadTags, setUploadTags] = useState('');
   const [uploading, setUploading] = useState(false);
 
-  // 加载数据集列表
-  const loadDatasets = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(`http://localhost:8000/api/datasets/list?page=${page}&page_size=20`);
-      const data = await response.json();
-      setDatasets(data.datasets);
-      setTotal(data.total);
-    } catch (error) {
-      console.error('Failed to load datasets:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // 使用 SWR 获取数据集列表（自动缓存和去重）
+  const { data, error, isLoading, mutate } = useDatasetList({
+    page,
+    page_size: 20,
+    sort_by: 'uploaded_at',
+    sort_order: 'desc',
+  });
 
-  useEffect(() => {
-    loadDatasets();
-  }, [page]);
+  // 从 SWR 响应中提取数据
+  const datasets = data?.datasets || [];
+  const total = data?.total || 0;
+  const loading = isLoading;
+
+  // 刷新数据集列表（使用 SWR mutate）
+  const loadDatasets = async () => {
+    await mutate();
+  };
 
   // 删除数据集
   const handleDelete = async (datasetId: string) => {

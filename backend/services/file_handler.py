@@ -20,28 +20,31 @@ class FileHandler:
         self.upload_dir = upload_dir
         os.makedirs(upload_dir, exist_ok=True)
     
-    def save_uploaded_file(
+    async def save_uploaded_file(
         self,
         file_content: bytes,
         filename: str
     ) -> Tuple[str, str]:
         """
-        保存上传的文件
-        
+        保存上传的文件（异步流式处理）
+
         返回:
             (file_id, file_path)
         """
+        import aiofiles
+
         # 生成文件ID
         file_id = str(uuid.uuid4())
-        
+
         # 保存文件
         file_path = os.path.join(self.upload_dir, f"{file_id}_{filename}")
-        
-        with open(file_path, 'wb') as f:
-            f.write(file_content)
-        
+
+        # 使用 aiofiles 异步写入
+        async with aiofiles.open(file_path, 'wb') as f:
+            await f.write(file_content)
+
         logger.info(f"文件已保存: {file_path}")
-        
+
         return file_id, file_path
     
     def read_csv_file(self, file_path: str) -> pd.DataFrame:

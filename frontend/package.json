@@ -19,6 +19,7 @@
     "react-dom": "^18.2.0",
     "react-dropzone": "^14.3.8",
     "recharts": "^2.12.7",
+    "swr": "^2.3.7",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

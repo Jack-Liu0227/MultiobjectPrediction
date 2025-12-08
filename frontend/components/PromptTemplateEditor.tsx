@@ -8,7 +8,7 @@ import {
 interface PromptTemplate {
   template_id?: string;
   template_name: string;
-  template_type: 'single_target' | 'multi_target';
+  template_type: 'unified';  // 仅支持统一格式
   description: string;
   system_role: string;
   task_description: string;
@@ -32,14 +32,36 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [currentTemplate, setCurrentTemplate] = useState<PromptTemplate>({
     template_name: '',
-    template_type: 'single_target',
+    template_type: 'unified',
     description: '',
     system_role: '',
-    task_description: '',
+    task_description: 'Predict {target_properties_list} for the target material using systematic analysis.',
     input_format: '**Target Material**:\n{test_sample}',
-    output_format: '',
-    reference_format: '{reference_samples}',
-    analysis_protocol: '',
+    output_format: `Provide your systematic analysis and end with EXACTLY this JSON format:
+
+{
+  "predictions": {
+    {predictions_json_template}
+  },
+  "confidence": "<high/medium/low>",
+  "reasoning": "<your_analysis_summary>"
+}`,
+    reference_format: '**Reference Samples**:\n\nEach sample shows values for all target properties.\n\n{reference_samples}',
+    analysis_protocol: `**Required Analysis Protocol**:
+
+1. **Reference-Driven Baseline Establishment**:
+   - **Classification**: First, classify the general family of all materials involved (references and target).
+   - **Primary Baseline Selection**: From the provided \`Reference Samples\`, identify the single sample that is the **most analogous** to the \`Target Material\`. This sample and its \`Known True Values\` will serve as your **primary baseline**. Justify your choice.
+   - **Sanity Check (Optional but Recommended)**: Use your general knowledge of standard materials as a secondary check.
+
+2. **Plausibility Assessment**:
+   - Assess the expected range for each target property based on your selected **primary baseline sample**.
+   - Consider the relationships between properties when applicable (e.g., strength-ductility trade-offs).
+
+3. **Interpolative Correction & Justification**:
+   - Formulate corrected values for each property.
+   - Your reasoning must be an **interpolation or extrapolation** from the primary baseline. Quantify how the **differences in characteristics** between the target and the baseline sample translate into specific property adjustments.
+   - Use fundamental materials principles to support *why* these differences lead to your calculated adjustments.`,
     predictions_json_template: '',
     column_name_mapping: {
       'Processing': 'Heat treatment method',
@@ -91,17 +113,17 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
     );
     if (detectedProcCols.length > 0) {
       setProcessingColumn(detectedProcCols);
-      // 工艺列标准化为 "Processing" 键（不使用原始列名如 Processing_Description）
-      // 如果用户已自定义该值，保留；否则使用默认值 "Heat treatment method"
-      if (!newMapping['Processing']) {
-        newMapping['Processing'] = 'Heat treatment method';
-      }
+      // 为每个工艺列添加映射（使用实际的列名作为键）
+      detectedProcCols.forEach((procCol: string) => {
+        if (!newMapping[procCol]) {
+          // 默认映射为 "Heat treatment method"
+          newMapping[procCol] = 'Heat treatment method';
+        }
+      });
     }
 
-    // 3. 自动检测目标属性列（根据模板类型）
-    const detectedTargetCols = currentTemplate.template_type === 'single_target'
-      ? ['UTS(MPa)']
-      : ['UTS(MPa)', 'El(%)'];
+    // 3. 自动检测目标属性列（统一格式默认使用多目标）
+    const detectedTargetCols = ['UTS(MPa)', 'El(%)'];
     setTargetColumns(detectedTargetCols);
     // 为每个目标属性添加映射（默认映射为自己）
     detectedTargetCols.forEach(col => {
@@ -190,14 +212,36 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
     if (!templateId) {
       setCurrentTemplate({
         template_name: '',
-        template_type: 'single_target',
+        template_type: 'unified',
         description: '',
         system_role: '',
-        task_description: '',
+        task_description: 'Predict {target_properties_list} for the target material using systematic analysis.',
         input_format: '**Target Material**:\n{test_sample}',
-        output_format: '',
-        reference_format: '{reference_samples}',
-        analysis_protocol: '',
+        output_format: `Provide your systematic analysis and end with EXACTLY this JSON format:
+
+{
+  "predictions": {
+    {predictions_json_template}
+  },
+  "confidence": "<high/medium/low>",
+  "reasoning": "<your_analysis_summary>"
+}`,
+        reference_format: '**Reference Samples**:\n\nEach sample shows values for all target properties.\n\n{reference_samples}',
+        analysis_protocol: `**Required Analysis Protocol**:
+
+1. **Reference-Driven Baseline Establishment**:
+   - **Classification**: First, classify the general family of all materials involved (references and target).
+   - **Primary Baseline Selection**: From the provided \`Reference Samples\`, identify the single sample that is the **most analogous** to the \`Target Material\`. This sample and its \`Known True Values\` will serve as your **primary baseline**. Justify your choice.
+   - **Sanity Check (Optional but Recommended)**: Use your general knowledge of standard materials as a secondary check.
+
+2. **Plausibility Assessment**:
+   - Assess the expected range for each target property based on your selected **primary baseline sample**.
+   - Consider the relationships between properties when applicable (e.g., strength-ductility trade-offs).
+
+3. **Interpolative Correction & Justification**:
+   - Formulate corrected values for each property.
+   - Your reasoning must be an **interpolation or extrapolation** from the primary baseline. Quantify how the **differences in characteristics** between the target and the baseline sample translate into specific property adjustments.
+   - Use fundamental materials principles to support *why* these differences lead to your calculated adjustments.`,
         column_name_mapping: {
           'Processing': 'Heat treatment method',
           'Composition': 'Composition'
@@ -234,6 +278,19 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
     }
   };
 
+  // 生成友好的模板 ID（基于模板名称）
+  const generateTemplateId = (templateName: string): string => {
+    // 将模板名称转换为 slug 格式
+    const slug = templateName
+      .toLowerCase()
+      .replace(/[^\u4e00-\u9fa5a-z0-9]+/g, '_') // 保留中文、字母、数字，其他替换为下划线
+      .replace(/^_+|_+$/g, ''); // 去除首尾下划线
+
+    // 添加时间戳避免冲突
+    const timestamp = Date.now();
+    return `${slug}_${timestamp}`;
+  };
+
   // 保存模板
   const saveTemplate = async () => {
     // 验证必填字段
@@ -253,7 +310,9 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
       }
     }
 
-    const templateId = selectedTemplateId || `custom_${Date.now()}`;
+    // 确定模板 ID：如果有选中的 ID 则更新，否则创建新模板
+    const isNewTemplate = !selectedTemplateId;
+    const templateId = selectedTemplateId || generateTemplateId(currentTemplate.template_name);
 
     try {
       const response = await fetch(`http://localhost:8000/api/prompt-templates/${templateId}`, {
@@ -265,10 +324,15 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
       });
 
       if (response.ok) {
-        alert('模板保存成功');
+        alert(isNewTemplate ? '模板创建成功' : '模板更新成功');
         await loadTemplates();
         setSelectedTemplateId(templateId);
         setIsEditing(false);
+
+        // 通知父组件更新模板（重要：保存后需要更新预测配置）
+        if (onTemplateSelect) {
+          onTemplateSelect(currentTemplate);
+        }
       } else {
         const errorData = await response.json().catch(() => ({}));
         alert(`模板保存失败: ${errorData.detail || '未知错误'}`);
@@ -309,6 +373,56 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
     }
   };
 
+  // 新建模板
+  const createNewTemplate = () => {
+    setCurrentTemplate({
+      template_name: '',
+      template_type: 'unified',
+      description: '',
+      system_role: '',
+      task_description: 'Predict {target_properties_list} for the target material using systematic analysis.',
+      input_format: '**Target Material**:\n{test_sample}',
+      output_format: `Provide your systematic analysis and end with EXACTLY this JSON format:
+
+{
+  "predictions": {
+    {predictions_json_template}
+  },
+  "confidence": "<high/medium/low>",
+  "reasoning": "<your_analysis_summary>"
+}`,
+      reference_format: '**Reference Samples**:\n\nEach sample shows values for all target properties.\n\n{reference_samples}',
+      analysis_protocol: `**Required Analysis Protocol**:
+
+1. **Reference-Driven Baseline Establishment**:
+   - **Classification**: First, classify the general family of all materials involved (references and target).
+   - **Primary Baseline Selection**: From the provided \`Reference Samples\`, identify the single sample that is the **most analogous** to the \`Target Material\`. This sample and its \`Known True Values\` will serve as your **primary baseline**. Justify your choice.
+   - **Sanity Check (Optional but Recommended)**: Use your general knowledge of standard materials as a secondary check.
+
+2. **Plausibility Assessment**:
+   - Assess the expected range for each target property based on your selected **primary baseline sample**.
+   - Consider the relationships between properties when applicable (e.g., strength-ductility trade-offs).
+
+3. **Interpolative Correction & Justification**:
+   - Formulate corrected values for each property.
+   - Your reasoning must be an **interpolation or extrapolation** from the primary baseline. Quantify how the **differences in characteristics** between the target and the baseline sample translate into specific property adjustments.
+   - Use fundamental materials principles to support *why* these differences lead to your calculated adjustments.`,
+      predictions_json_template: '',
+      column_name_mapping: {
+        'Processing': 'Heat treatment method',
+        'Composition': 'Composition'
+      },
+      apply_mapping_to_target: true,
+    });
+    setSelectedTemplateId(''); // 清空选择，表示创建新模板
+    setIsEditing(true);
+
+    // 通知父组件清空模板选择
+    if (onTemplateSelect) {
+      onTemplateSelect(null);
+    }
+  };
+
   // 复制模板
   const duplicateTemplate = () => {
     if (!selectedTemplateId) {
@@ -324,28 +438,18 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
     setCurrentTemplate(newTemplate);
     setSelectedTemplateId(''); // 清空选择，表示创建新模板
     setIsEditing(true);
+
+    // 通知父组件清空模板选择
+    if (onTemplateSelect) {
+      onTemplateSelect(null);
+    }
   };
 
-  // 获取默认 JSON 模板
-  const getDefaultJsonTemplate = (templateType: string) => {
-    if (templateType === 'single_target') {
-      return `{
-    "predictions": {
-        "{target_property}": {"value": <number>, "unit": "{unit}"}
-    },
-    "confidence": "<high/medium/low>",
-    "reasoning": "<brief explanation>"
-}`;
-    } else {
-      return `{
-    "predictions": {
-        "{target_property_1}": {"value": <number>, "unit": "{unit}"},
-        "{target_property_2}": {"value": <number>, "unit": "{unit}"}
-    },
-    "confidence": "<high/medium/low>",
-    "reasoning": "<brief explanation>"
-}`;
-    }
+  // 获取默认 JSON 模板（统一格式）
+  const getDefaultJsonTemplate = () => {
+    // 统一格式（UNIFIED_PROTOCOL）
+    return `"{target_property_1}": {"value": <number>, "unit": "{unit}"},
+        "{target_property_2}": {"value": <number>, "unit": "{unit}"}`;
   };
 
   // 预览模板（使用示例数据或真实数据渲染完整提示词）
@@ -389,9 +493,7 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
             );
         const useTargetColumns = stateTargetColumns.length > 0
           ? stateTargetColumns
-          : (currentTemplate.template_type === 'single_target'
-              ? ['UTS(MPa)']
-              : ['UTS(MPa)', 'El(%)']);
+          : ['UTS(MPa)', 'El(%)'];  // 统一格式默认使用多目标
 
         // 使用 RAG 预览 API 获取真实样本数据
         const ragResponse = await fetch('http://localhost:8000/api/prediction/preview-rag', {
@@ -422,9 +524,7 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
         localTargetColumns = useTargetColumns;
       } else {
         // 使用示例数据（从常量文件导入）
-        localTargetColumns = currentTemplate.template_type === 'single_target'
-          ? ['UTS(MPa)']
-          : ['UTS(MPa)', 'El(%)'];
+        localTargetColumns = ['UTS(MPa)', 'El(%)'];  // 统一格式默认使用多目标
 
         testSample = getExampleTestSample();
         referenceSamples = EXAMPLE_SUPERALLOY_REFERENCES || [];
@@ -604,7 +704,7 @@ ${formatValue(currentTemplate.analysis_protocol)}
 
   return (
     <div className="space-y-4">
-      {/* 模板选择 */}
+      {/* 模板选择和操作按钮 */}
       <div className="flex items-center gap-4">
         <label className="text-sm font-medium text-gray-700">选择模板：</label>
         <select
@@ -618,7 +718,7 @@ ${formatValue(currentTemplate.analysis_protocol)}
           <option value="">使用默认模板</option>
           {templates.map((template) => (
             <option key={template.template_id} value={template.template_id}>
-              {template.template_name} ({template.template_type === 'single_target' ? '单目标' : '多目标'})
+              {template.template_name}
               {template.updated_at && ` - 更新于 ${new Date(template.updated_at).toLocaleString('zh-CN', {
                 year: 'numeric',
                 month: '2-digit',
@@ -630,28 +730,48 @@ ${formatValue(currentTemplate.analysis_protocol)}
           ))}
         </select>
         <button
+          onClick={createNewTemplate}
+          className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 whitespace-nowrap"
+          title="创建一个全新的模板"
+        >
+          ➕ 新建
+        </button>
+        <button
           onClick={() => setIsEditing(!isEditing)}
-          className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+          className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 whitespace-nowrap"
         >
           {isEditing ? '取消编辑' : '编辑模板'}
         </button>
         {selectedTemplateId && (
           <button
             onClick={duplicateTemplate}
-            className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600"
+            className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 whitespace-nowrap"
+            title="复制当前模板创建新模板"
           >
-            复制
+            📋 复制
           </button>
         )}
         {selectedTemplateId && !selectedTemplateId.startsWith('default_') && (
           <button
             onClick={deleteTemplate}
-            className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
+            className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 whitespace-nowrap"
+            title="删除当前模板"
           >
-            删除
+            🗑️ 删除
           </button>
         )}
       </div>
+
+      {/* 当前模式提示 */}
+      {isEditing && (
+        <div className={`px-4 py-2 rounded-lg ${selectedTemplateId ? 'bg-blue-50 border border-blue-200' : 'bg-green-50 border border-green-200'}`}>
+          <p className="text-sm font-medium">
+            {selectedTemplateId
+              ? `📝 编辑模式：正在编辑 "${currentTemplate.template_name}"`
+              : `✨ 创建模式：正在创建新模板`}
+          </p>
+        </div>
+      )}
 
       {/* 模板编辑表单 */}
       {isEditing && (
@@ -671,12 +791,15 @@ ${formatValue(currentTemplate.analysis_protocol)}
               <label className="block text-sm font-medium text-gray-700 mb-1">模板类型</label>
               <select
                 value={currentTemplate.template_type}
-                onChange={(e) => setCurrentTemplate({ ...currentTemplate, template_type: e.target.value as 'single_target' | 'multi_target' })}
+                onChange={(e) => setCurrentTemplate({ ...currentTemplate, template_type: e.target.value as 'unified' })}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                disabled
               >
-                <option value="single_target">单目标</option>
-                <option value="multi_target">多目标</option>
+                <option value="unified">统一格式（UNIFIED_PROTOCOL）</option>
               </select>
+              <p className="text-xs text-gray-500 mt-1">
+                所有模板已统一为 FEW-SHOT AUGMENTED CORRECTION PROTOCOL 格式
+              </p>
             </div>
           </div>
 
@@ -759,7 +882,7 @@ ${formatValue(currentTemplate.analysis_protocol)}
               <button
                 type="button"
                 onClick={() => {
-                  const defaultTemplate = getDefaultJsonTemplate(currentTemplate.template_type);
+                  const defaultTemplate = getDefaultJsonTemplate();
                   setCurrentTemplate({ ...currentTemplate, predictions_json_template: defaultTemplate });
                 }}
                 className="ml-2 text-xs text-blue-600 hover:text-blue-800"
@@ -794,8 +917,8 @@ ${formatValue(currentTemplate.analysis_protocol)}
           <div className="border-t border-gray-200 pt-4">
             <div className="flex items-center justify-between mb-3">
               <label className="block text-sm font-medium text-gray-700">
-                列名映射配置
-                <span className="ml-2 text-xs text-gray-500">（自定义提示词中显示的列名）</span>
+                🔑 列名映射配置
+                <span className="ml-2 text-xs text-gray-500">（控制提示词中显示的列名，对预测质量至关重要）</span>
               </label>
               <button
                 type="button"
@@ -812,6 +935,17 @@ ${formatValue(currentTemplate.analysis_protocol)}
               >
                 重置为默认值
               </button>
+            </div>
+
+            {/* 重要性说明 */}
+            <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-sm text-blue-900 font-medium mb-1">
+                ⚠️ 重要：列名映射会影响 LLM 对数据的理解
+              </p>
+              <p className="text-xs text-blue-700">
+                将技术性列名（如 "Processing"）映射为描述性名称（如 "Heat treatment method"）可以显著提高 LLM 的预测准确性。
+                映射后的名称会在预览和实际预测的提示词中使用。
+              </p>
             </div>
 
             {/* 提示信息 */}
@@ -894,9 +1028,18 @@ ${formatValue(currentTemplate.analysis_protocol)}
               </label>
             </div>
 
-            <p className="text-xs text-gray-500 mt-2">
-              💡 列名映射示例：将 "Temperature" 映射为 "测试温度"，将 "Processing" 映射为 "热处理工艺"
-            </p>
+            <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+              <p className="text-xs font-medium text-gray-700 mb-2">💡 列名映射示例：</p>
+              <ul className="text-xs text-gray-600 space-y-1 ml-4">
+                <li>• "Temperature" → "测试温度" 或 "Test Temperature (K)"</li>
+                <li>• "Processing" → "热处理工艺" 或 "Heat treatment method"</li>
+                <li>• "Pressure" → "压力 (MPa)" 或 "Applied Pressure"</li>
+                <li>• "Aging_Time" → "时效时间 (h)" 或 "Aging Duration"</li>
+              </ul>
+              <p className="text-xs text-gray-500 mt-2 italic">
+                提示：使用描述性名称可以帮助 LLM 更好地理解数据含义，从而提高预测准确性。
+              </p>
+            </div>
           </div>
 
           {/* 预览数据源选择 */}
@@ -967,10 +1110,9 @@ ${formatValue(currentTemplate.analysis_protocol)}
                     .filter((col: string) => {
                       const isComposition = col.includes('at%') || col.includes('wt%');
                       const isProcessing = col.toLowerCase().includes('processing') || col.toLowerCase().includes('treatment');
-                      const targetColumns = currentTemplate.template_type === 'single_target'
-                        ? ['UTS(MPa)']
-                        : ['UTS(MPa)', 'El(%)'];
-                      const isTarget = targetColumns.includes(col);
+                      // 统一格式默认使用多目标
+                      const defaultTargetColumns = ['UTS(MPa)', 'El(%)'];
+                      const isTarget = defaultTargetColumns.includes(col);
                       return !isComposition && !isProcessing && !isTarget;
                     })
                     .map((col: string) => (

@@ -20,19 +20,35 @@ router = APIRouter()
 
 
 @router.get("/{result_id}", response_model=ResultsResponse)
-async def get_results(result_id: str):
+async def get_results(
+    result_id: str,
+    page: int = 1,
+    page_size: int = 100
+):
     """
-    获取预测结果
+    获取预测结果（支持分页）
+
+    参数:
+        result_id: 结果ID
+        page: 页码（从1开始）
+        page_size: 每页数量（默认100，最大1000）
 
     响应:
     {
         "result_id": "uuid",
         "predictions": [...],
         "metrics": {...},
-        "execution_time": 123.45
+        "execution_time": 123.45,
+        "total_count": 1000,
+        "page": 1,
+        "page_size": 100
     }
     """
     try:
+        # 限制 page_size 范围
+        page_size = min(max(1, page_size), 1000)
+        page = max(1, page)
+
         result_dir = RESULTS_DIR / result_id
 
         if not result_dir.exists():
@@ -43,8 +59,17 @@ async def get_results(result_id: str):
         if not predictions_file.exists():
             raise HTTPException(status_code=404, detail="预测结果文件不存在")
 
+        # 读取 CSV 并分页
         df = pd.read_csv(predictions_file)
-        predictions = serialize_dataframe(df)
+        total_count = len(df)
+
+        # 计算分页范围
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+
+        # 分页数据
+        df_page = df.iloc[start_idx:end_idx]
+        predictions = serialize_dataframe(df_page)
 
         # 读取评估指标
         metrics_file = result_dir / "metrics.json"
@@ -68,23 +93,22 @@ async def get_results(result_id: str):
         task_db = TaskDatabase()
 
         # 通过 result_id 查找任务
-        from database.models import SessionLocal, Task
-        db = SessionLocal()
-        try:
+        from database.models import get_db_session, Task
+        with get_db_session() as db:
             task = db.query(Task).filter(Task.result_id == result_id).first()
             if task:
                 task_id = task.task_id
                 if task.created_at and task.completed_at:
                     execution_time = (task.completed_at - task.created_at).total_seconds()
-        finally:
-            db.close()
 
-        # 如果数据库中没有，尝试从文件系统读取
+        # 如果数据库中没有，尝试从文件系统读取（异步）
         if not task_id:
+            import aiofiles
             task_file = RESULTS_DIR.parent / "tasks" / f"{result_id}.json"
             if task_file.exists():
-                with open(task_file, 'r', encoding='utf-8') as f:
-                    task_info = json.load(f)
+                async with aiofiles.open(task_file, 'r', encoding='utf-8') as f:
+                    content = await f.read()
+                    task_info = json.loads(content)
                     task_id = task_info.get("task_id", result_id)
                     from datetime import datetime
                     created = datetime.fromisoformat(task_info["created_at"])
@@ -96,7 +120,10 @@ async def get_results(result_id: str):
             task_id=task_id,
             predictions=predictions,
             metrics=metrics,
-            execution_time=execution_time
+            execution_time=execution_time,
+            total_count=total_count,
+            page=page,
+            page_size=page_size
         )
 
     except HTTPException:
@@ -143,8 +170,11 @@ async def get_task_config_file(result_id: str):
         if not config_file.exists():
             raise HTTPException(status_code=404, detail="任务配置文件不存在")
 
-        with open(config_file, "r", encoding="utf-8") as f:
-            config_data = json.load(f)
+        # 异步读取配置文件
+        import aiofiles
+        async with aiofiles.open(config_file, "r", encoding="utf-8") as f:
+            content = await f.read()
+            config_data = json.loads(content)
 
         # 确保所有数据都是 JSON 可序列化的（处理 inf, -inf, nan）
         config_data = make_json_serializable(config_data)
@@ -168,8 +198,11 @@ async def get_process_details_file(result_id: str):
         if not process_details_file.exists():
             raise HTTPException(status_code=404, detail="预测过程详情文件不存在")
 
-        with open(process_details_file, "r", encoding="utf-8") as f:
-            process_details_data = json.load(f)
+        # 异步读取过程详情文件
+        import aiofiles
+        async with aiofiles.open(process_details_file, "r", encoding="utf-8") as f:
+            content = await f.read()
+            process_details_data = json.loads(content)
 
         # 确保所有数据都是 JSON 可序列化的（处理 inf, -inf, nan）
         process_details_data = make_json_serializable(process_details_data)

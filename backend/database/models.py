@@ -3,7 +3,7 @@
 使用 SQLAlchemy ORM
 """
 
-from sqlalchemy import Column, String, Float, Integer, Text, DateTime, JSON, create_engine, TypeDecorator
+from sqlalchemy import Column, String, Float, Integer, Text, DateTime, JSON, create_engine, TypeDecorator, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
@@ -116,6 +116,12 @@ class Task(Base):
     # 预测过程详情（JSON 格式存储）
     process_details = Column(JSON, nullable=True)
 
+    # 复合索引：优化常见查询
+    __table_args__ = (
+        Index('idx_status_created_at', 'status', 'created_at'),  # 按状态和时间查询
+        Index('idx_status_updated_at', 'status', 'updated_at'),  # 按状态和更新时间查询
+    )
+
 
 class Dataset(Base):
     """数据集表"""
@@ -166,10 +172,35 @@ def init_db():
 
 
 def get_db():
-    """获取数据库会话"""
+    """获取数据库会话（用于 FastAPI 依赖注入）"""
     db = SessionLocal()
     try:
         yield db
+    finally:
+        db.close()
+
+
+# 上下文管理器：确保数据库会话正确关闭
+from contextlib import contextmanager
+
+@contextmanager
+def get_db_session():
+    """
+    获取数据库会话的上下文管理器
+    自动处理提交、回滚和关闭
+
+    使用示例:
+        with get_db_session() as db:
+            task = db.query(Task).filter(Task.task_id == task_id).first()
+            # ... 数据库操作 ...
+    """
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

@@ -1,13 +1,15 @@
 /**
  * 任务历史页面
+ * 使用 SWR 实现请求缓存和优化
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
-import { getTaskList, deleteTask, rerunTask, cancelTask } from '../lib/api';
+import { deleteTask, rerunTask, cancelTask } from '../lib/api';
 import { taskEvents } from '../lib/taskEvents';
 import ExportButton from '@/components/ExportButton';
 import { exportToCSV, exportToExcel, exportToHTML, generateFileName } from '@/lib/exportUtils';
+import { useTaskList, refreshTaskList } from '../lib/hooks/useSWRApi';
 
 interface Task {
   task_id: string;
@@ -39,16 +41,26 @@ interface Task {
 export default function TasksPage() {
   const router = useRouter();
   const { id } = router.query; // 获取任务ID参数
-  const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const pageSize = 20;
+
+  // 使用 SWR 获取任务列表（自动缓存和去重）
+  const { data, error, isLoading, mutate } = useTaskList({
+    page,
+    page_size: pageSize,
+    status: statusFilter || undefined,
+    sort_by: 'created_at',
+    sort_order: sortOrder,
+  });
+
+  // 从 SWR 响应中提取数据
+  const tasks = data?.tasks || [];
+  const total = data?.total || 0;
+  const loading = isLoading;
 
   // 编辑状态 - 支持多字段编辑
   const [editingCell, setEditingCell] = useState<{taskId: string, field: 'note' | 'filename' | 'taskId'} | null>(null);
@@ -61,10 +73,14 @@ export default function TasksPage() {
   // 客户端挂载状态（避免 hydration 错误）
   const [mounted, setMounted] = useState(false);
 
+  // 任务详情加载状态（独立于列表加载状态）
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
   // 函数定义必须在所有 hooks 之前或之后，不能在条件返回之后
   const loadTaskDetail = async (taskId: string) => {
-    setLoading(true);
-    setError(null);
+    setDetailLoading(true);
+    setDetailError(null);
 
     try {
       const response = await fetch(`http://localhost:8000/api/tasks/${taskId}`);
@@ -81,33 +97,16 @@ export default function TasksPage() {
       };
       setSelectedTask(taskWithConfig);
     } catch (err: any) {
-      setError(err.message || '加载任务详情失败');
+      setDetailError(err.message || '加载任务详情失败');
     } finally {
-      setLoading(false);
+      setDetailLoading(false);
     }
   };
 
+  // 刷新任务列表（使用 SWR mutate）
   const loadTasks = async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await getTaskList({
-        page,
-        page_size: pageSize,
-        status: statusFilter || undefined,
-        sort_by: 'created_at',
-        sort_order: sortOrder,
-      });
-
-      setTasks(response.tasks);
-      setTotal(response.total);
-      setSelectedTaskIds(new Set()); // 清空选择
-    } catch (err: any) {
-      setError(err.message || '加载任务列表失败');
-    } finally {
-      setLoading(false);
-    }
+    setSelectedTaskIds(new Set()); // 清空选择
+    await mutate(); // SWR 重新验证数据
   };
 
   const handleDelete = async (taskId: string) => {
@@ -283,10 +282,19 @@ export default function TasksPage() {
           throw new Error('更新备注失败');
         }
 
-        // 更新本地任务列表
-        setTasks(tasks.map(t =>
-          t.task_id === taskId ? { ...t, note: editingValue } : t
-        ));
+        // 更新本地任务列表（使用 SWR mutate）
+        mutate(
+          (currentData: any) => {
+            if (!currentData) return currentData;
+            return {
+              ...currentData,
+              tasks: currentData.tasks.map((t: Task) =>
+                t.task_id === taskId ? { ...t, note: editingValue } : t
+              ),
+            };
+          },
+          false // 不重新验证，使用乐观更新
+        );
 
         // 如果当前正在查看此任务详情，也需要更新
         if (selectedTask?.task_id === taskId) {
@@ -336,33 +344,40 @@ export default function TasksPage() {
 
     if (id && typeof id === 'string') {
       loadTaskDetail(id);
-    } else {
-      loadTasks();
     }
-  }, [id, page, statusFilter, mounted]);
+    // SWR 会自动处理数据加载，不需要手动调用 loadTasks
+  }, [id, mounted]);
 
   // 监听任务更新事件（跨组件同步）
+  // 使用 useCallback 确保事件处理器引用稳定，避免重复注册
+  const handleNoteUpdate = useCallback((data: { taskId: string; field?: string; value?: any }) => {
+    // 使用 SWR mutate 进行乐观更新
+    mutate(
+      (currentData: any) => {
+        if (!currentData) return currentData;
+        return {
+          ...currentData,
+          tasks: currentData.tasks.map((t: Task) =>
+            t.task_id === data.taskId ? { ...t, note: data.value } : t
+          ),
+        };
+      },
+      false // 不重新验证，使用乐观更新
+    );
+
+    // 如果当前正在查看此任务详情，也需要更新
+    setSelectedTask(prev =>
+      prev && prev.task_id === data.taskId ? { ...prev, note: data.value } : prev
+    );
+  }, [mutate]);
+
   useEffect(() => {
-    const handleNoteUpdate = (data: { taskId: string; field?: string; value?: any }) => {
-      // 更新任务列表中的 Note
-      setTasks(prevTasks =>
-        prevTasks.map(t =>
-          t.task_id === data.taskId ? { ...t, note: data.value } : t
-        )
-      );
-
-      // 如果当前正在查看此任务详情，也需要更新
-      if (selectedTask?.task_id === data.taskId) {
-        setSelectedTask(prev => prev ? { ...prev, note: data.value } : null);
-      }
-    };
-
     taskEvents.on('note-updated', handleNoteUpdate);
 
     return () => {
       taskEvents.off('note-updated', handleNoteUpdate);
     };
-  }, [selectedTask]);
+  }, [handleNoteUpdate]);
 
   // 在客户端挂载之前不渲染任何内容，避免 hydration 错误
   if (!mounted) {
@@ -417,9 +432,9 @@ export default function TasksPage() {
         <div className="max-w-7xl mx-auto px-4 py-8">
 
         {/* 错误提示 */}
-        {error && (
+        {(error || detailError) && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded">
-            <p className="text-red-600">{error}</p>
+            <p className="text-red-600">{error || detailError}</p>
           </div>
         )}
 

@@ -40,7 +40,7 @@ const getBinColor = (minError: number): string => {
   return '#991b1b';  // 深红色
 };
 
-export default function ErrorDistributionChart({
+const ErrorDistributionChart = React.memo(function ErrorDistributionChart({
   predictions,
   targetColumn,
   binCount = 10,
@@ -179,5 +179,7 @@ export default function ErrorDistributionChart({
       </ResponsiveContainer>
     </div>
   );
-}
+});
+
+export default ErrorDistributionChart;
 

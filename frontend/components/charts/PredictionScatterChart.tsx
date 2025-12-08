@@ -25,7 +25,7 @@ interface PredictionScatterChartProps {
   onPointClick?: (dataPoint: any, index: number) => void;
 }
 
-export default function PredictionScatterChart({
+const PredictionScatterChart = React.memo(function PredictionScatterChart({
   predictions,
   targetColumn,
   onPointClick,
@@ -172,5 +172,7 @@ export default function PredictionScatterChart({
       </div>
     </div>
   );
-}
+});
+
+export default PredictionScatterChart;
 

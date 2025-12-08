@@ -36,7 +36,7 @@ interface DataPoint {
   index: number;
 }
 
-export default function ParetoFrontChart({
+const ParetoFrontChart = React.memo(function ParetoFrontChart({
   predictions,
   targetColumns,
   paretoIndices = [],
@@ -196,5 +196,7 @@ export default function ParetoFrontChart({
       </ResponsiveContainer>
     </div>
   );
-}
+});
+
+export default ParetoFrontChart;
 

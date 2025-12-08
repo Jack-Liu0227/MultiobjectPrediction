@@ -3,7 +3,7 @@
  * 显示最近任务列表和实时状态
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { getTaskList, cancelTask } from '@/lib/api';
 
@@ -55,6 +55,7 @@ export default function TaskSidebar({ isOpen, onClose, currentTaskId }: TaskSide
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // 加载任务列表
   const loadTasks = useCallback(async () => {
@@ -74,16 +75,34 @@ export default function TaskSidebar({ isOpen, onClose, currentTaskId }: TaskSide
     }
   }, []);
 
+  // 清理定时器
+  const clearPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+  }, []);
+
   // 初始加载和定时刷新
   useEffect(() => {
     if (isOpen) {
       loadTasks();
+
+      // 清除旧的定时器
+      clearPolling();
+
       // 每10秒刷新一次（如果有运行中的任务则每5秒）
       const hasRunning = tasks.some(t => t.status === 'running' || t.status === 'pending');
-      const interval = setInterval(loadTasks, hasRunning ? 5000 : 10000);
-      return () => clearInterval(interval);
+      pollingIntervalRef.current = setInterval(loadTasks, hasRunning ? 5000 : 10000);
+
+      return () => {
+        clearPolling();
+      };
+    } else {
+      // 侧边栏关闭时清理定时器
+      clearPolling();
     }
-  }, [isOpen, loadTasks]);
+  }, [isOpen, loadTasks, clearPolling, tasks]);
 
   // 处理取消任务
   const handleCancel = async (taskId: string, e: React.MouseEvent) => {

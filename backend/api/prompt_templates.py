@@ -17,11 +17,11 @@ template_manager = PromptTemplateManager()
 
 
 class PromptTemplateData(BaseModel):
-    """提示词模板数据"""
+    """提示词模板数据（统一格式 UNIFIED_PROTOCOL）"""
     template_name: str = Field(..., description="模板名称")
-    template_type: str = Field(..., description="模板类型：single_target 或 multi_target")
+    template_type: str = Field(default="unified", description="模板类型：unified（统一格式）")
     description: str = Field(default="", description="模板描述")
-    system_role: str = Field(default="", description="系统角色")
+    system_role: str = Field(default="", description="系统角色（可选）")
     task_description: str = Field(..., description="任务描述")
     input_format: str = Field(..., description="输入格式")
     output_format: str = Field(..., description="输出格式")
@@ -261,26 +261,19 @@ async def preview_template(request: PromptPreviewRequest):
             )
 
         # 同步构建模板变量，便于前端调试与展示
-        is_multi_target = len(request.target_columns) > 1
-
-        # reference_samples 文本与真实预测保持一致
-        if is_multi_target:
-            reference_section = prompt_builder._build_multi_target_reference_section(  # type: ignore[attr-defined]
-                retrieved_samples,
-                request.target_columns,
-            )
-        else:
-            reference_section = prompt_builder._build_single_target_reference_section(  # type: ignore[attr-defined]
-                retrieved_samples,
-                request.target_columns[0],
-            )
+        # 使用统一的参考样本构建方法
+        reference_samples = prompt_builder._build_reference_section(  # type: ignore[attr-defined]
+            retrieved_samples,
+            request.target_columns,
+        )
 
         # 应用列名映射到测试样本（与 PromptBuilder.build_prompt() 保持一致）
         mapped_test_sample = prompt_builder._apply_column_name_mapping(test_sample_text)  # type: ignore[attr-defined]
 
+        # 统一的模板变量（支持单目标和多目标）
         template_variables: Dict[str, Any] = {
             "test_sample": mapped_test_sample,  # 使用映射后的测试样本文本
-            "reference_samples": reference_section,
+            "reference_samples": reference_samples,  # 统一使用 reference_samples
             "target_properties_list": ", ".join(request.target_columns),
             "num_targets": len(request.target_columns),
             "composition": composition_str,
@@ -289,26 +282,20 @@ async def preview_template(request: PromptPreviewRequest):
             "reference_samples_count": len(similar_samples),
         }
 
-        # 预测 JSON 模板（与 PromptBuilder 内部逻辑保持一致）
-        if is_multi_target:
-            if template_dict.get("predictions_json_template"):
-                template_variables["predictions_json_template"] = template_dict["predictions_json_template"]
-            else:
-                template_variables["predictions_json_template"] = prompt_builder._build_predictions_json_template(  # type: ignore[attr-defined]
-                    request.target_columns
-                )
+        # 预测 JSON 模板（统一格式）
+        if template_dict.get("predictions_json_template"):
+            template_variables["predictions_json_template"] = template_dict["predictions_json_template"]
         else:
+            template_variables["predictions_json_template"] = prompt_builder._build_predictions_json_template(  # type: ignore[attr-defined]
+                request.target_columns
+            )
+
+        # 为了向后兼容，添加单目标相关变量（当只有一个目标时）
+        if len(request.target_columns) == 1:
             target_property = request.target_columns[0]
             unit_value = prompt_builder.get_property_unit(target_property)
             template_variables["target_property"] = target_property
             template_variables["unit"] = unit_value
-
-            if template_dict.get("predictions_json_template"):
-                template_variables["predictions_json_template"] = template_dict["predictions_json_template"]
-            else:
-                template_variables["predictions_json_template"] = (
-                    f'"{target_property}": {{"value": <number>, "unit": "{unit_value}"}}'
-                )
 
         # 记录成功日志
         logger.info(f"返回预览响应: prompt长度={len(prompt)}, template_variables keys={list(template_variables.keys())}")

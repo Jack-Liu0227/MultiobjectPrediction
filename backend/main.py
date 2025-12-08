@@ -4,9 +4,44 @@
 支持失败组分重新预测的FastAPI应用
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 import os
+
+# HTTP 缓存中间件
+class CacheControlMiddleware(BaseHTTPMiddleware):
+    """
+    添加 HTTP 缓存控制头
+
+    根据不同的 API 路径设置不同的缓存策略：
+    - 列表查询（tasks/list, datasets/list）：缓存 30 秒
+    - 结果详情（results/{id}）：缓存 60 秒（结果是静态的）
+    - 其他 GET 请求：缓存 10 秒
+    - POST/PUT/DELETE 请求：不缓存
+    """
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        # 只对成功的 GET 请求添加缓存头
+        if request.method == "GET" and response.status_code == 200:
+            path = request.url.path
+
+            # 列表查询：缓存 30 秒
+            if "/list" in path:
+                response.headers["Cache-Control"] = "public, max-age=30"
+            # 结果详情：缓存 60 秒
+            elif "/results/" in path:
+                response.headers["Cache-Control"] = "public, max-age=60"
+            # 其他 GET 请求：缓存 10 秒
+            else:
+                response.headers["Cache-Control"] = "public, max-age=10"
+        else:
+            # POST/PUT/DELETE 请求不缓存
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+
+        return response
+
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -15,6 +50,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# 添加缓存控制中间件
+app.add_middleware(CacheControlMiddleware)
+
 # CORS配置
 app.add_middleware(
     CORSMiddleware,
@@ -22,6 +60,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Cache-Control"],  # 允许前端访问 Cache-Control 头
 )
 
 # 导入路由

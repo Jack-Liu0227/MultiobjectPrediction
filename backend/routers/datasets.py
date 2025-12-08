@@ -70,18 +70,28 @@ async def upload_dataset(
         # 生成唯一 ID
         dataset_id = str(uuid.uuid4())
         
-        # 保存文件
+        # 保存文件（流式处理，避免大文件内存占用）
         file_path = UPLOAD_DIR / f"{dataset_id}.csv"
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
+
+        # 使用 aiofiles 异步流式写入
+        import aiofiles
+        chunk_size = 1024 * 1024  # 1MB chunks
+
+        async with aiofiles.open(file_path, "wb") as buffer:
+            while chunk := await file.read(chunk_size):
+                await buffer.write(chunk)
+
         # 读取文件信息
         df = pd.read_csv(file_path)
         file_size = file_path.stat().st_size
-        
-        # 计算文件哈希
-        with open(file_path, "rb") as f:
-            file_hash = hashlib.md5(f.read()).hexdigest()
+
+        # 计算文件哈希（流式处理）
+        import hashlib
+        hash_md5 = hashlib.md5()
+        async with aiofiles.open(file_path, "rb") as f:
+            while chunk := await f.read(chunk_size):
+                hash_md5.update(chunk)
+        file_hash = hash_md5.hexdigest()
         
         # 解析标签
         tag_list = [t.strip() for t in tags.split(",")] if tags else []

@@ -10,7 +10,7 @@ from sqlalchemy import desc, asc
 import logging
 import json
 
-from database.models import Task, SessionLocal, init_db
+from .models import Task, SessionLocal, init_db, get_db_session
 
 logger = logging.getLogger(__name__)
 
@@ -26,18 +26,17 @@ class TaskDatabase:
     def create_task(self, task_data: Dict[str, Any]) -> str:
         """
         创建新任务
-        
+
         Args:
             task_data: 任务数据字典
-            
+
         Returns:
             task_id: 任务ID
         """
-        db = SessionLocal()
-        try:
+        with get_db_session() as db:
             # 提取配置信息
             config = task_data.get("config", {})
-            
+
             task = Task(
                 task_id=task_data["task_id"],
                 status=task_data["status"],
@@ -59,84 +58,63 @@ class TaskDatabase:
                 config_json=config,
                 created_at=datetime.now()
             )
-            
+
             db.add(task)
-            db.commit()
-            db.refresh(task)
-            
+            db.flush()  # 刷新以获取 task_id
+
             logger.info(f"Created task: {task.task_id}")
             return task.task_id
-            
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Failed to create task: {e}", exc_info=True)
-            raise
-        finally:
-            db.close()
     
     def update_task(self, task_id: str, updates: Dict[str, Any]) -> bool:
         """
         更新任务信息
-        
+
         Args:
             task_id: 任务ID
             updates: 更新字段字典
-            
+
         Returns:
             是否更新成功
         """
-        db = SessionLocal()
-        try:
+        with get_db_session() as db:
             task = db.query(Task).filter(Task.task_id == task_id).first()
             if not task:
                 logger.warning(f"Task not found: {task_id}")
                 return False
-            
+
             # 更新字段
             for key, value in updates.items():
                 if hasattr(task, key):
                     setattr(task, key, value)
-            
+
             # 更新时间戳
             task.updated_at = datetime.now()
-            
+
             # 根据状态更新时间戳
             if updates.get("status") == "running" and not task.started_at:
                 task.started_at = datetime.now()
             elif updates.get("status") in ["completed", "failed", "cancelled"]:
                 task.completed_at = datetime.now()
-            
-            db.commit()
+
             logger.info(f"Updated task: {task_id}")
             return True
-            
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Failed to update task {task_id}: {e}", exc_info=True)
-            raise
-        finally:
-            db.close()
     
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         """
         获取任务信息
-        
+
         Args:
             task_id: 任务ID
-            
+
         Returns:
             任务信息字典，不存在返回 None
         """
-        db = SessionLocal()
-        try:
+        with get_db_session() as db:
             task = db.query(Task).filter(Task.task_id == task_id).first()
             if not task:
                 return None
-            
+
             return self._task_to_dict(task)
-            
-        finally:
-            db.close()
     
     def _safe_json_field(self, value: Any, default: Any = None) -> Any:
         """
@@ -262,8 +240,7 @@ class TaskDatabase:
         Returns:
             {"tasks": [...], "total": 100}
         """
-        db = SessionLocal()
-        try:
+        with get_db_session() as db:
             # 构建查询
             query = db.query(Task)
 
@@ -290,9 +267,6 @@ class TaskDatabase:
                 "total": total
             }
 
-        finally:
-            db.close()
-
     def delete_task(self, task_id: str) -> bool:
         """
         删除任务
@@ -303,24 +277,15 @@ class TaskDatabase:
         Returns:
             是否删除成功
         """
-        db = SessionLocal()
-        try:
+        with get_db_session() as db:
             task = db.query(Task).filter(Task.task_id == task_id).first()
             if not task:
                 logger.warning(f"Task not found: {task_id}")
                 return False
 
             db.delete(task)
-            db.commit()
             logger.info(f"Deleted task: {task_id}")
             return True
-
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Failed to delete task {task_id}: {e}", exc_info=True)
-            raise
-        finally:
-            db.close()
 
     def get_task_count_by_status(self) -> Dict[str, int]:
         """
@@ -329,8 +294,7 @@ class TaskDatabase:
         Returns:
             {"pending": 5, "running": 2, "completed": 100, "failed": 3}
         """
-        db = SessionLocal()
-        try:
+        with get_db_session() as db:
             from sqlalchemy import func
 
             result = db.query(
@@ -339,7 +303,4 @@ class TaskDatabase:
             ).group_by(Task.status).all()
 
             return {status: count for status, count in result}
-
-        finally:
-            db.close()
 

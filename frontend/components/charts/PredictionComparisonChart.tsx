@@ -43,7 +43,7 @@ const getErrorColor = (errorPercent: number): string => {
   return '#ef4444';  // 红色 - 大误差
 };
 
-export default function PredictionComparisonChart({
+const PredictionComparisonChart = React.memo(function PredictionComparisonChart({
   predictions,
   targetColumn,
   metrics,
@@ -204,5 +204,7 @@ export default function PredictionComparisonChart({
       </ResponsiveContainer>
     </div>
   );
-}
+});
+
+export default PredictionComparisonChart;
 
