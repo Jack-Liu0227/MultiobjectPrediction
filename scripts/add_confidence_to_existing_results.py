@@ -101,23 +101,42 @@ def add_confidence_to_task(task_dir: Path, dry_run: bool = False) -> dict:
         print(f"💾 已更新 process_details.json")
         stats['updated_process_details'] = True
     
-    # 4. 更新 predictions.csv（添加 confidence 列）
+    # 4. 更新 predictions.csv（添加或更新 confidence 列）
     predictions_file = task_dir / "predictions.csv"
     if predictions_file.exists():
         df = pd.read_csv(predictions_file)
-        
-        # 创建 confidence 列（如果不存在）
+
+        # 根据 sample_index 匹配 confidence
+        confidence_map = {detail['sample_index']: detail.get('confidence') for detail in process_details}
+
+        # 检查是否需要更新
+        needs_update = False
         if 'confidence' not in df.columns:
-            # 根据 sample_index 匹配 confidence
-            confidence_map = {detail['sample_index']: detail.get('confidence') for detail in process_details}
+            needs_update = True
+            action = "添加"
+        else:
+            # 检查是否有值发生变化
+            old_confidence = df['confidence'].tolist()
+            new_confidence = df['sample_index'].map(confidence_map).tolist()
+            if old_confidence != new_confidence:
+                needs_update = True
+                action = "更新"
+
+        if needs_update:
             df['confidence'] = df['sample_index'].map(confidence_map)
-            
+
             if not dry_run:
+                # 创建备份
+                backup_file = task_dir / "predictions.csv.backup_before_confidence"
+                if not backup_file.exists():
+                    import shutil
+                    shutil.copy2(predictions_file, backup_file)
+
                 df.to_csv(predictions_file, index=False, encoding='utf-8')
-                print(f"💾 已更新 predictions.csv（添加 confidence 列）")
+                print(f"💾 已{action} predictions.csv 的 confidence 列")
                 stats['updated_predictions_csv'] = True
         else:
-            print(f"ℹ️  predictions.csv 已包含 confidence 列")
+            print(f"ℹ️  predictions.csv 的 confidence 列已是最新")
     
     return stats
 

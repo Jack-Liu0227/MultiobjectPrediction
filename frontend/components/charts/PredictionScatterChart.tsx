@@ -1,9 +1,9 @@
 /**
- * 预测值 vs 真实值散点图组件
- * 显示预测值与真实值的对比，包含 y=x 参考线
+ * Predicted vs Actual Scatter Chart Component
+ * Displays comparison between predicted and actual values with y=x reference line and evaluation metrics
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   ScatterChart,
   Scatter,
@@ -30,45 +30,77 @@ const PredictionScatterChart = React.memo(function PredictionScatterChart({
   targetColumn,
   onPointClick,
 }: PredictionScatterChartProps) {
-  // 准备散点图数据
-  const scatterData = predictions.map((pred, index) => {
-    const trueValue = pred[targetColumn];
-    const predictedValue = pred[`${targetColumn}_predicted`];
+  // Prepare scatter plot data
+  const scatterData = useMemo(() => {
+    return predictions.map((pred, index) => {
+      const trueValue = pred[targetColumn];
+      const predictedValue = pred[`${targetColumn}_predicted`];
+
+      return {
+        index: pred.sample_index !== undefined ? pred.sample_index : index,
+        true: trueValue,
+        predicted: predictedValue,
+        error: Math.abs(predictedValue - trueValue),
+        relativeError: Math.abs((predictedValue - trueValue) / trueValue) * 100,
+        ...pred, // Keep complete data for click events
+      };
+    }).filter(d => d.true !== null && d.predicted !== null);
+  }, [predictions, targetColumn]);
+
+  // Calculate evaluation metrics
+  const metrics = useMemo(() => {
+    if (scatterData.length === 0) {
+      return { mae: 0, rmse: 0, r2: 0, count: 0 };
+    }
+
+    const trueValues = scatterData.map(d => d.true);
+    const predictedValues = scatterData.map(d => d.predicted);
+
+    // Calculate MAE
+    const mae = scatterData.reduce((sum, d) => sum + Math.abs(d.predicted - d.true), 0) / scatterData.length;
+
+    // Calculate RMSE
+    const mse = scatterData.reduce((sum, d) => sum + Math.pow(d.predicted - d.true, 2), 0) / scatterData.length;
+    const rmse = Math.sqrt(mse);
+
+    // Calculate R²
+    const trueMean = trueValues.reduce((sum, v) => sum + v, 0) / trueValues.length;
+    const ssTotal = trueValues.reduce((sum, v) => sum + Math.pow(v - trueMean, 2), 0);
+    const ssResidual = scatterData.reduce((sum, d) => sum + Math.pow(d.true - d.predicted, 2), 0);
+    const r2 = ssTotal > 0 ? 1 - (ssResidual / ssTotal) : 0;
 
     return {
-      index: pred.sample_index !== undefined ? pred.sample_index : index,
-      true: trueValue,
-      predicted: predictedValue,
-      error: Math.abs(predictedValue - trueValue),
-      relativeError: Math.abs((predictedValue - trueValue) / trueValue) * 100,
-      ...pred, // 保留完整数据用于点击事件
+      mae: mae,
+      rmse: rmse,
+      r2: r2,
+      count: scatterData.length,
     };
-  }).filter(d => d.true !== null && d.predicted !== null);
+  }, [scatterData]);
 
-  // 计算数据范围（用于绘制 y=x 参考线）
+  // Calculate data range (for drawing y=x reference line)
   const allValues = scatterData.flatMap(d => [d.true, d.predicted]);
   const minValue = Math.min(...allValues);
   const maxValue = Math.max(...allValues);
   const padding = (maxValue - minValue) * 0.1;
 
-  // 自定义 Tooltip
+  // Custom Tooltip
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length > 0) {
       const data = payload[0].payload;
       return (
         <div className="bg-white border border-gray-300 rounded-lg shadow-lg p-3 text-sm">
-          <p className="font-semibold text-gray-900 mb-2">样本 #{data.index + 1}</p>
-          <p className="text-blue-600">真实值: {data.true.toFixed(3)}</p>
-          <p className="text-green-600">预测值: {data.predicted.toFixed(3)}</p>
-          <p className="text-red-600">误差: {data.error.toFixed(3)}</p>
-          <p className="text-orange-600">相对误差: {data.relativeError.toFixed(2)}%</p>
+          <p className="font-semibold text-gray-900 mb-2">Sample #{data.index + 1}</p>
+          <p className="text-blue-600">Actual: {data.true.toFixed(3)}</p>
+          <p className="text-green-600">Predicted: {data.predicted.toFixed(3)}</p>
+          <p className="text-red-600">Error: {data.error.toFixed(3)}</p>
+          <p className="text-orange-600">Relative Error: {data.relativeError.toFixed(2)}%</p>
         </div>
       );
     }
     return null;
   };
 
-  // 点击事件处理
+  // Click event handler
   const handleClick = (data: any) => {
     if (onPointClick && data) {
       onPointClick(data, data.index);
@@ -86,24 +118,24 @@ const PredictionScatterChart = React.memo(function PredictionScatterChart({
           <XAxis
             type="number"
             dataKey="true"
-            name="真实值"
+            name="Actual Value"
             domain={[minValue - padding, maxValue + padding]}
             label={{
-              value: `真实值 (${targetColumn})`,
+              value: `Actual Value (${targetColumn})`,
               position: 'bottom',
               offset: 40,
               style: { fontSize: 14, fontWeight: 600 },
             }}
             tick={{ fontSize: 12 }}
           />
-          
+
           <YAxis
             type="number"
             dataKey="predicted"
-            name="预测值"
+            name="Predicted Value"
             domain={[minValue - padding, maxValue + padding]}
             label={{
-              value: `预测值 (${targetColumn})`,
+              value: `Predicted Value (${targetColumn})`,
               angle: -90,
               position: 'left',
               offset: 40,
@@ -120,7 +152,7 @@ const PredictionScatterChart = React.memo(function PredictionScatterChart({
             wrapperStyle={{ fontSize: 14 }}
           />
           
-          {/* y=x 参考线（理想预测线） */}
+          {/* y=x reference line (ideal prediction) */}
           <ReferenceLine
             segment={[
               { x: minValue - padding, y: minValue - padding },
@@ -130,16 +162,16 @@ const PredictionScatterChart = React.memo(function PredictionScatterChart({
             strokeWidth={2}
             strokeDasharray="5 5"
             label={{
-              value: 'y = x (理想预测)',
+              value: 'y = x (Ideal)',
               position: 'insideTopRight',
               fill: '#6b7280',
               fontSize: 12,
             }}
           />
-          
-          {/* 散点 */}
+
+          {/* Scatter points */}
           <Scatter
-            name="预测样本"
+            name="Prediction Samples"
             data={scatterData}
             fill="#3b82f6"
             onClick={handleClick}
@@ -154,20 +186,48 @@ const PredictionScatterChart = React.memo(function PredictionScatterChart({
           </Scatter>
         </ScatterChart>
       </ResponsiveContainer>
-      
-      {/* 图例说明 */}
+
+      {/* Legend */}
       <div className="mt-4 flex justify-center gap-6 text-sm">
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-green-500"></div>
-          <span className="text-gray-600">相对误差 &lt; 5%</span>
+          <span className="text-gray-600">Relative Error &lt; 5%</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-orange-500"></div>
-          <span className="text-gray-600">5% ≤ 相对误差 &lt; 10%</span>
+          <span className="text-gray-600">5% ≤ Relative Error &lt; 10%</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-red-500"></div>
-          <span className="text-gray-600">相对误差 ≥ 10%</span>
+          <span className="text-gray-600">Relative Error ≥ 10%</span>
+        </div>
+      </div>
+
+      {/* Evaluation Metrics */}
+      <div className="mt-6 bg-gray-50 rounded-lg p-4">
+        <h4 className="text-sm font-semibold text-gray-700 mb-3">Evaluation Metrics (Based on {metrics.count} samples)</h4>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="bg-white rounded-lg p-3 border border-gray-200">
+            <div className="text-xs text-gray-500 mb-1">R² Score</div>
+            <div className="text-lg font-semibold text-gray-900">
+              {metrics.r2.toFixed(4)}
+            </div>
+            <div className="text-xs text-gray-500 mt-1">
+              {(metrics.r2 * 100).toFixed(2)}%
+            </div>
+          </div>
+          <div className="bg-white rounded-lg p-3 border border-gray-200">
+            <div className="text-xs text-gray-500 mb-1">RMSE</div>
+            <div className="text-lg font-semibold text-gray-900">
+              {metrics.rmse.toFixed(3)}
+            </div>
+          </div>
+          <div className="bg-white rounded-lg p-3 border border-gray-200">
+            <div className="text-xs text-gray-500 mb-1">MAE</div>
+            <div className="text-lg font-semibold text-gray-900">
+              {metrics.mae.toFixed(3)}
+            </div>
+          </div>
         </div>
       </div>
     </div>

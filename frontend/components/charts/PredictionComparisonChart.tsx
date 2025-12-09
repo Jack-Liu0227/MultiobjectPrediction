@@ -1,6 +1,6 @@
 /**
- * 真实值 vs 预测值对比图组件
- * 展示每个目标列的预测准确性
+ * Actual vs Predicted Comparison Chart Component
+ * Displays prediction accuracy for each target column
  */
 
 import React, { useMemo } from 'react';
@@ -34,13 +34,13 @@ interface DataPoint {
   index: number;
 }
 
-// 根据误差大小返回颜色
+// Return color based on error magnitude
 const getErrorColor = (errorPercent: number): string => {
-  if (errorPercent < 5) return '#22c55e';  // 绿色 - 小误差
-  if (errorPercent < 10) return '#84cc16'; // 黄绿色
-  if (errorPercent < 20) return '#eab308'; // 黄色
-  if (errorPercent < 30) return '#f97316'; // 橙色
-  return '#ef4444';  // 红色 - 大误差
+  if (errorPercent < 5) return '#22c55e';  // Green - small error
+  if (errorPercent < 10) return '#84cc16'; // Yellow-green
+  if (errorPercent < 20) return '#eab308'; // Yellow
+  if (errorPercent < 30) return '#f97316'; // Orange
+  return '#ef4444';  // Red - large error
 };
 
 const PredictionComparisonChart = React.memo(function PredictionComparisonChart({
@@ -48,7 +48,7 @@ const PredictionComparisonChart = React.memo(function PredictionComparisonChart(
   targetColumn,
   metrics,
 }: PredictionComparisonChartProps) {
-  // 处理数据
+  // Process data
   const { data, minVal, maxVal } = useMemo(() => {
     const points: DataPoint[] = [];
     let min = Infinity;
@@ -75,7 +75,7 @@ const PredictionComparisonChart = React.memo(function PredictionComparisonChart(
       }
     });
 
-    // 添加边距
+    // Add padding
     const range = max - min;
     const padding = range * 0.1;
 
@@ -86,7 +86,38 @@ const PredictionComparisonChart = React.memo(function PredictionComparisonChart(
     };
   }, [predictions, targetColumn]);
 
-  // 自定义散点形状（根据误差着色）
+  // Dynamically calculate evaluation metrics (based on filtered data)
+  const calculatedMetrics = useMemo(() => {
+    if (data.length === 0) {
+      return { r2: 0, rmse: 0, mae: 0, mape: 0 };
+    }
+
+    const actualValues = data.map(d => d.actual);
+    const predictedValues = data.map(d => d.predicted);
+
+    // Calculate MAE
+    const mae = data.reduce((sum, d) => sum + d.error, 0) / data.length;
+
+    // Calculate RMSE
+    const mse = data.reduce((sum, d) => sum + Math.pow(d.actual - d.predicted, 2), 0) / data.length;
+    const rmse = Math.sqrt(mse);
+
+    // Calculate R²
+    const actualMean = actualValues.reduce((sum, v) => sum + v, 0) / actualValues.length;
+    const ssTotal = actualValues.reduce((sum, v) => sum + Math.pow(v - actualMean, 2), 0);
+    const ssResidual = data.reduce((sum, d) => sum + Math.pow(d.actual - d.predicted, 2), 0);
+    const r2 = ssTotal > 0 ? 1 - (ssResidual / ssTotal) : 0;
+
+    // Calculate MAPE
+    const mape = data.reduce((sum, d) => sum + d.errorPercent, 0) / data.length;
+
+    return { r2, rmse, mae, mape };
+  }, [data]);
+
+  // Use dynamically calculated metrics if no external metrics provided
+  const displayMetrics = metrics || calculatedMetrics;
+
+  // Custom dot shape (colored by error)
   const CustomDot = (props: any) => {
     const { cx, cy, payload } = props;
     const color = getErrorColor(payload.errorPercent);
@@ -104,17 +135,17 @@ const PredictionComparisonChart = React.memo(function PredictionComparisonChart(
     );
   };
 
-  // 自定义 Tooltip
+  // Custom Tooltip
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const point = payload[0].payload as DataPoint;
       return (
         <div className="bg-white p-3 border border-gray-200 rounded shadow-lg text-sm">
-          <p className="font-semibold mb-1">样本 #{point.index + 1}</p>
-          <p>真实值: <span className="font-medium">{point.actual.toFixed(2)}</span></p>
-          <p>预测值: <span className="font-medium">{point.predicted.toFixed(2)}</span></p>
+          <p className="font-semibold mb-1">Sample #{point.index + 1}</p>
+          <p>Actual: <span className="font-medium">{point.actual.toFixed(2)}</span></p>
+          <p>Predicted: <span className="font-medium">{point.predicted.toFixed(2)}</span></p>
           <p className={point.errorPercent > 10 ? 'text-red-600' : 'text-green-600'}>
-            误差: {point.error.toFixed(2)} ({point.errorPercent.toFixed(1)}%)
+            Error: {point.error.toFixed(2)} ({point.errorPercent.toFixed(1)}%)
           </p>
         </div>
       );
@@ -125,7 +156,7 @@ const PredictionComparisonChart = React.memo(function PredictionComparisonChart(
   if (data.length === 0) {
     return (
       <div className="p-6 text-center text-gray-500">
-        没有可用的预测数据
+        No prediction data available
       </div>
     );
   }
@@ -134,25 +165,23 @@ const PredictionComparisonChart = React.memo(function PredictionComparisonChart(
     <div className="w-full">
       <div className="flex justify-between items-start mb-4">
         <h3 className="text-lg font-semibold text-gray-900">{targetColumn}</h3>
-        {metrics && (
-          <div className="flex gap-4 text-sm">
-            <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded">
-              R² = {(metrics.r2 * 100).toFixed(1)}%
-            </span>
-            <span className="px-2 py-1 bg-green-50 text-green-700 rounded">
-              RMSE = {metrics.rmse.toFixed(2)}
-            </span>
-            <span className="px-2 py-1 bg-purple-50 text-purple-700 rounded">
-              MAE = {metrics.mae.toFixed(2)}
-            </span>
-            <span className="px-2 py-1 bg-orange-50 text-orange-700 rounded">
-              MAPE = {(metrics.mape * 100).toFixed(1)}%
-            </span>
-          </div>
-        )}
+        <div className="flex gap-4 text-sm">
+          <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded">
+            R² = {(displayMetrics.r2 * 100).toFixed(1)}%
+          </span>
+          <span className="px-2 py-1 bg-green-50 text-green-700 rounded">
+            RMSE = {displayMetrics.rmse.toFixed(2)}
+          </span>
+          <span className="px-2 py-1 bg-purple-50 text-purple-700 rounded">
+            MAE = {displayMetrics.mae.toFixed(2)}
+          </span>
+          <span className="px-2 py-1 bg-orange-50 text-orange-700 rounded">
+            MAPE = {displayMetrics.mape.toFixed(1)}%
+          </span>
+        </div>
       </div>
 
-      {/* 图例 */}
+      {/* Legend */}
       <div className="mb-3 flex items-center gap-4 text-xs">
         <span className="flex items-center gap-1">
           <span className="w-2 h-2 rounded-full bg-green-500"></span> &lt;5%
@@ -163,7 +192,7 @@ const PredictionComparisonChart = React.memo(function PredictionComparisonChart(
         <span className="flex items-center gap-1">
           <span className="w-2 h-2 rounded-full bg-red-500"></span> &gt;20%
         </span>
-        <span className="text-gray-400 ml-2">（误差范围）</span>
+        <span className="text-gray-400 ml-2">(Error Range)</span>
       </div>
 
       <ResponsiveContainer width="100%" height={300}>
@@ -172,22 +201,22 @@ const PredictionComparisonChart = React.memo(function PredictionComparisonChart(
           <XAxis
             type="number"
             dataKey="actual"
-            name="真实值"
+            name="Actual Value"
             domain={[minVal, maxVal]}
             tick={{ fontSize: 11 }}
-            label={{ value: '真实值', position: 'bottom', offset: 0, fontSize: 12 }}
+            label={{ value: 'Actual Value', position: 'bottom', offset: 0, fontSize: 12 }}
           />
           <YAxis
             type="number"
             dataKey="predicted"
-            name="预测值"
+            name="Predicted Value"
             domain={[minVal, maxVal]}
             tick={{ fontSize: 11 }}
-            label={{ value: '预测值', angle: -90, position: 'insideLeft', fontSize: 12 }}
+            label={{ value: 'Predicted Value', angle: -90, position: 'insideLeft', fontSize: 12 }}
           />
           <Tooltip content={<CustomTooltip />} />
-          
-          {/* 理想预测线 (y=x) */}
+
+          {/* Ideal prediction line (y=x) */}
           <ReferenceLine
             segment={[{ x: minVal, y: minVal }, { x: maxVal, y: maxVal }]}
             stroke="#9ca3af"

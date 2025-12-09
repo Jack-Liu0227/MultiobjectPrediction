@@ -322,8 +322,20 @@ class LLMResponseParser:
                 if 'confidence' in data:
                     confidence = data['confidence']
                     # 验证值是否有效
-                    if isinstance(confidence, str) and confidence.lower() in ['high', 'medium', 'low']:
-                        return confidence.lower()
+                    if isinstance(confidence, str):
+                        confidence_lower = confidence.lower()
+
+                        # 标准值: high, medium, low
+                        if confidence_lower in ['high', 'medium', 'low']:
+                            return confidence_lower
+
+                        # 处理变体: medium-high, medium-low 等
+                        if 'high' in confidence_lower:
+                            return 'high'
+                        elif 'medium' in confidence_lower:
+                            return 'medium'
+                        elif 'low' in confidence_lower:
+                            return 'low'
 
             except (json.JSONDecodeError, ValueError, KeyError):
                 continue

@@ -1,6 +1,6 @@
 /**
- * 误差分布图组件
- * 展示预测误差的直方图分布
+ * Error Distribution Chart Component
+ * Displays histogram distribution of prediction errors
  */
 
 import React, { useMemo } from 'react';
@@ -30,14 +30,14 @@ interface BinData {
   maxError: number;
 }
 
-// 根据误差范围返回颜色
+// Return color based on error range
 const getBinColor = (minError: number): string => {
-  if (minError < 5) return '#22c55e';   // 绿色
-  if (minError < 10) return '#84cc16';  // 黄绿色
-  if (minError < 15) return '#eab308';  // 黄色
-  if (minError < 20) return '#f97316';  // 橙色
-  if (minError < 30) return '#ef4444';  // 红色
-  return '#991b1b';  // 深红色
+  if (minError < 5) return '#22c55e';   // Green
+  if (minError < 10) return '#84cc16';  // Yellow-green
+  if (minError < 15) return '#eab308';  // Yellow
+  if (minError < 20) return '#f97316';  // Orange
+  if (minError < 30) return '#ef4444';  // Red
+  return '#991b1b';  // Dark red
 };
 
 const ErrorDistributionChart = React.memo(function ErrorDistributionChart({
@@ -45,7 +45,7 @@ const ErrorDistributionChart = React.memo(function ErrorDistributionChart({
   targetColumn,
   binCount = 10,
 }: ErrorDistributionChartProps) {
-  // 计算误差分布
+  // Calculate error distribution
   const { bins, stats } = useMemo(() => {
     const errors: number[] = [];
 
@@ -63,7 +63,7 @@ const ErrorDistributionChart = React.memo(function ErrorDistributionChart({
       return { bins: [], stats: null };
     }
 
-    // 统计信息
+    // Statistical information
     const sorted = [...errors].sort((a, b) => a - b);
     const mean = errors.reduce((a, b) => a + b, 0) / errors.length;
     const median = sorted[Math.floor(sorted.length / 2)];
@@ -71,7 +71,7 @@ const ErrorDistributionChart = React.memo(function ErrorDistributionChart({
     const q1 = sorted[Math.floor(sorted.length * 0.25)];
     const q3 = sorted[Math.floor(sorted.length * 0.75)];
 
-    // 创建直方图区间（固定区间：0-5, 5-10, 10-15, 15-20, 20-30, 30+）
+    // Create histogram bins (fixed intervals: 0-5, 5-10, 10-15, 15-20, 20-30, 30+)
     const binEdges = [0, 5, 10, 15, 20, 30, 50, 100];
     const binData: BinData[] = [];
 
@@ -89,7 +89,7 @@ const ErrorDistributionChart = React.memo(function ErrorDistributionChart({
       });
     }
 
-    // 过滤掉空的区间
+    // Filter out empty bins
     const nonEmptyBins = binData.filter(b => b.count > 0 || b.minError < 30);
 
     return {
@@ -110,15 +110,15 @@ const ErrorDistributionChart = React.memo(function ErrorDistributionChart({
     };
   }, [predictions, targetColumn]);
 
-  // 自定义 Tooltip
+  // Custom Tooltip
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const bin = payload[0].payload as BinData;
       return (
         <div className="bg-white p-3 border border-gray-200 rounded shadow-lg text-sm">
-          <p className="font-semibold">误差范围: {bin.range}</p>
-          <p>样本数: {bin.count}</p>
-          <p>占比: {bin.percentage.toFixed(1)}%</p>
+          <p className="font-semibold">Error Range: {bin.range}</p>
+          <p>Sample Count: {bin.count}</p>
+          <p>Percentage: {bin.percentage.toFixed(1)}%</p>
         </div>
       );
     }
@@ -128,7 +128,7 @@ const ErrorDistributionChart = React.memo(function ErrorDistributionChart({
   if (!stats || bins.length === 0) {
     return (
       <div className="p-6 text-center text-gray-500">
-        没有可用的误差数据
+        No error data available
       </div>
     );
   }
@@ -136,25 +136,25 @@ const ErrorDistributionChart = React.memo(function ErrorDistributionChart({
   return (
     <div className="w-full">
       <h3 className="text-lg font-semibold text-gray-900 mb-4">
-        {targetColumn} - 误差分布
+        {targetColumn} - Error Distribution
       </h3>
 
-      {/* 统计信息卡片 */}
+      {/* Statistics Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-sm">
         <div className="bg-blue-50 rounded p-2">
-          <div className="text-blue-600 text-xs">平均误差</div>
+          <div className="text-blue-600 text-xs">Mean Error</div>
           <div className="font-semibold text-blue-900">{stats.mean.toFixed(1)}%</div>
         </div>
         <div className="bg-green-50 rounded p-2">
-          <div className="text-green-600 text-xs">中位数</div>
+          <div className="text-green-600 text-xs">Median</div>
           <div className="font-semibold text-green-900">{stats.median.toFixed(1)}%</div>
         </div>
         <div className="bg-purple-50 rounded p-2">
-          <div className="text-purple-600 text-xs">标准差</div>
+          <div className="text-purple-600 text-xs">Std Dev</div>
           <div className="font-semibold text-purple-900">{stats.std.toFixed(1)}%</div>
         </div>
         <div className="bg-orange-50 rounded p-2">
-          <div className="text-orange-600 text-xs">误差&lt;10%</div>
+          <div className="text-orange-600 text-xs">Error &lt;10%</div>
           <div className="font-semibold text-orange-900">
             {((stats.within10 / stats.count) * 100).toFixed(0)}%
           </div>
@@ -167,7 +167,7 @@ const ErrorDistributionChart = React.memo(function ErrorDistributionChart({
           <XAxis dataKey="range" tick={{ fontSize: 11 }} />
           <YAxis
             tick={{ fontSize: 11 }}
-            label={{ value: '样本数', angle: -90, position: 'insideLeft', fontSize: 12 }}
+            label={{ value: 'Sample Count', angle: -90, position: 'insideLeft', fontSize: 12 }}
           />
           <Tooltip content={<CustomTooltip />} />
           <Bar dataKey="count" radius={[4, 4, 0, 0]}>

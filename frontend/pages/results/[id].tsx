@@ -905,10 +905,10 @@ export default function ResultsPage() {
                   </div>
                   <div className="flex items-center space-x-4">
                     <ExportButton
-                      label="导出预测数据"
+                      label="Export Prediction Data"
                       options={[
                         {
-                          label: '导出为 CSV',
+                          label: 'Export as CSV',
                           format: 'csv',
                           onClick: () => {
                             exportToCSV(
@@ -918,7 +918,7 @@ export default function ResultsPage() {
                           },
                         },
                         {
-                          label: '导出为 Excel',
+                          label: 'Export as Excel',
                           format: 'excel',
                           onClick: () => {
                             exportToExcel(
@@ -929,7 +929,7 @@ export default function ResultsPage() {
                           },
                         },
                         {
-                          label: '导出为 HTML',
+                          label: 'Export as HTML',
                           format: 'html',
                           onClick: () => {
                             exportToHTML(
@@ -1108,21 +1108,21 @@ export default function ResultsPage() {
               <div>
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold text-gray-900">
-                    模型评估指标
+                    Model Evaluation Metrics
                   </h3>
                   <ExportButton
-                    label="导出评估指标"
+                    label="Export Metrics"
                     options={[
                       {
-                        label: '导出为 CSV',
+                        label: 'Export as CSV',
                         format: 'csv',
                         onClick: () => {
                           const currentMetrics = metricsByConfidence
                             ? getMetricsForConfidence(metricsByConfidence, metricsConfidenceFilter)
                             : results.metrics;
                           const metricsData = targetColumns.map(col => ({
-                            目标属性: col,
-                            置信度级别: metricsConfidenceFilter === 'all' ? '总体' : metricsConfidenceFilter,
+                            Target_Property: col,
+                            Confidence_Level: metricsConfidenceFilter === 'all' ? 'Overall' : metricsConfidenceFilter,
                             R2_Score: currentMetrics[col]?.r2?.toFixed(4) || '-',
                             RMSE: currentMetrics[col]?.rmse?.toFixed(4) || '-',
                             MAE: currentMetrics[col]?.mae?.toFixed(4) || '-',
@@ -1135,7 +1135,7 @@ export default function ResultsPage() {
                         },
                       },
                       {
-                        label: '导出为 Excel',
+                        label: 'Export as Excel',
                         format: 'excel',
                         onClick: () => {
                           const currentMetrics = metricsByConfidence
@@ -1157,7 +1157,7 @@ export default function ResultsPage() {
                         },
                       },
                       {
-                        label: '导出为 HTML',
+                        label: 'Export as HTML',
                         format: 'html',
                         onClick: () => {
                           const currentMetrics = metricsByConfidence
@@ -1234,13 +1234,13 @@ export default function ResultsPage() {
                   <div className="bg-gray-50 rounded-lg p-6">
                     <div className="flex justify-between items-center mb-4">
                       <h3 className="text-lg font-semibold text-gray-900">
-                        Pareto 前沿图
+                        Pareto Front Chart
                       </h3>
                       <ExportButton
-                        label="导出 Pareto 图"
+                        label="Export Pareto Chart"
                         options={[
                           {
-                            label: '导出图片 (PNG)',
+                            label: 'Export Image (PNG)',
                             format: 'png',
                             onClick: async () => {
                               const chartElement = document.querySelector('[data-chart-type="pareto-charts-tab"]') as HTMLElement;
@@ -1253,18 +1253,18 @@ export default function ResultsPage() {
                             },
                           },
                           {
-                            label: '导出数据 (CSV)',
+                            label: 'Export Data (CSV)',
                             format: 'csv',
                             onClick: () => {
                               const paretoData = results.predictions.map((pred: any) => {
                                 const row: any = {
-                                  样本索引: pred.sample_index !== undefined ? pred.sample_index : pred.ID,
+                                  Sample_Index: pred.sample_index !== undefined ? pred.sample_index : pred.ID,
                                 };
                                 targetColumns.forEach(col => {
-                                  row[`${col}_真实值`] = pred[col];
-                                  row[`${col}_预测值`] = pred[`${col}_predicted`];
+                                  row[`${col}_Actual`] = pred[col];
+                                  row[`${col}_Predicted`] = pred[`${col}_predicted`];
                                 });
-                                row['是否Pareto最优'] = paretoAnalysis?.pareto_indices?.includes(pred.sample_index !== undefined ? pred.sample_index : pred.ID) ? '是' : '否';
+                                row['Is_Pareto_Optimal'] = paretoAnalysis?.pareto_indices?.includes(pred.sample_index !== undefined ? pred.sample_index : pred.ID) ? 'Yes' : 'No';
                                 return row;
                               });
                               exportToCSV(
@@ -1291,13 +1291,13 @@ export default function ResultsPage() {
                 <div className="bg-gray-50 rounded-lg p-6">
                   <div className="flex justify-between items-center mb-6">
                     <h3 className="text-lg font-semibold text-gray-900">
-                      真实值 vs 预测值对比
+                      Actual vs Predicted Comparison
                     </h3>
                     <ExportButton
-                      label="导出所有对比图"
+                      label="Export All Comparison Charts"
                       options={[
                         {
-                          label: '导出所有图片 (PNG)',
+                          label: 'Export All Images (PNG)',
                           format: 'png',
                           onClick: async () => {
                             for (const col of targetColumns) {
@@ -1307,24 +1307,24 @@ export default function ResultsPage() {
                                   chartElement,
                                   generateFileName(`comparison_${col}_image`, 'png')
                                 );
-                                // 添加延迟避免同时导出多个图片
+                                // Add delay to avoid exporting multiple images simultaneously
                                 await new Promise(resolve => setTimeout(resolve, 500));
                               }
                             }
                           },
                         },
                         {
-                          label: '导出所有数据 (CSV)',
+                          label: 'Export All Data (CSV)',
                           format: 'csv',
                           onClick: () => {
                             const comparisonData = results.predictions.map((pred: any) => {
                               const row: any = {
-                                样本索引: pred.sample_index !== undefined ? pred.sample_index : pred.ID,
+                                Sample_Index: pred.sample_index !== undefined ? pred.sample_index : pred.ID,
                               };
                               targetColumns.forEach(col => {
-                                row[`${col}_真实值`] = pred[col];
-                                row[`${col}_预测值`] = pred[`${col}_predicted`];
-                                row[`${col}_误差`] = Math.abs(pred[col] - pred[`${col}_predicted`]).toFixed(3);
+                                row[`${col}_Actual`] = pred[col];
+                                row[`${col}_Predicted`] = pred[`${col}_predicted`];
+                                row[`${col}_Error`] = Math.abs(pred[col] - pred[`${col}_predicted`]).toFixed(3);
                               });
                               return row;
                             });
@@ -1343,10 +1343,10 @@ export default function ResultsPage() {
                         <div className="flex justify-between items-center mb-2">
                           <h4 className="font-medium text-gray-900">{col}</h4>
                           <ExportButton
-                            label="导出"
+                            label="Export"
                             options={[
                               {
-                                label: '导出图片 (PNG)',
+                                label: 'Export Image (PNG)',
                                 format: 'png',
                                 onClick: async () => {
                                   const chartElement = document.querySelector(`[data-chart-type="comparison-${col}"]`) as HTMLElement;
@@ -1359,14 +1359,14 @@ export default function ResultsPage() {
                                 },
                               },
                               {
-                                label: '导出数据 (CSV)',
+                                label: 'Export Data (CSV)',
                                 format: 'csv',
                                 onClick: () => {
                                   const chartData = results.predictions.map((pred: any) => ({
-                                    样本索引: pred.sample_index !== undefined ? pred.sample_index : pred.ID,
-                                    真实值: pred[col],
-                                    预测值: pred[`${col}_predicted`],
-                                    误差: Math.abs(pred[col] - pred[`${col}_predicted`]).toFixed(3),
+                                    Sample_Index: pred.sample_index !== undefined ? pred.sample_index : pred.ID,
+                                    Actual_Value: pred[col],
+                                    Predicted_Value: pred[`${col}_predicted`],
+                                    Error: Math.abs(pred[col] - pred[`${col}_predicted`]).toFixed(3),
                                   }));
                                   exportToCSV(
                                     chartData,
@@ -1381,7 +1381,6 @@ export default function ResultsPage() {
                           <PredictionComparisonChart
                             predictions={filterByConfidence(results.predictions)}
                             targetColumn={col}
-                            metrics={results.metrics?.[col]}
                           />
                         </div>
                       </div>
@@ -1393,13 +1392,13 @@ export default function ResultsPage() {
                 <div className="bg-gray-50 rounded-lg p-6">
                   <div className="flex justify-between items-center mb-6">
                     <h3 className="text-lg font-semibold text-gray-900">
-                      预测误差分布
+                      Prediction Error Distribution
                     </h3>
                     <ExportButton
-                      label="导出所有误差图"
+                      label="Export All Error Charts"
                       options={[
                         {
-                          label: '导出所有图片 (PNG)',
+                          label: 'Export All Images (PNG)',
                           format: 'png',
                           onClick: async () => {
                             for (const col of targetColumns) {
@@ -1415,18 +1414,18 @@ export default function ResultsPage() {
                           },
                         },
                         {
-                          label: '导出所有数据 (CSV)',
+                          label: 'Export All Data (CSV)',
                           format: 'csv',
                           onClick: () => {
                             const errorData = results.predictions.map((pred: any) => {
                               const row: any = {
-                                样本索引: pred.sample_index !== undefined ? pred.sample_index : pred.ID,
+                                Sample_Index: pred.sample_index !== undefined ? pred.sample_index : pred.ID,
                               };
                               targetColumns.forEach(col => {
                                 const error = pred[col] - pred[`${col}_predicted`];
-                                row[`${col}_误差`] = error.toFixed(3);
-                                row[`${col}_绝对误差`] = Math.abs(error).toFixed(3);
-                                row[`${col}_相对误差`] = ((Math.abs(error) / Math.abs(pred[col])) * 100).toFixed(2) + '%';
+                                row[`${col}_Error`] = error.toFixed(3);
+                                row[`${col}_Absolute_Error`] = Math.abs(error).toFixed(3);
+                                row[`${col}_Relative_Error`] = ((Math.abs(error) / Math.abs(pred[col])) * 100).toFixed(2) + '%';
                               });
                               return row;
                             });
@@ -1445,10 +1444,10 @@ export default function ResultsPage() {
                         <div className="flex justify-between items-center mb-2">
                           <h4 className="font-medium text-gray-900">{col}</h4>
                           <ExportButton
-                            label="导出"
+                            label="Export"
                             options={[
                               {
-                                label: '导出图片 (PNG)',
+                                label: 'Export Image (PNG)',
                                 format: 'png',
                                 onClick: async () => {
                                   const chartElement = document.querySelector(`[data-chart-type="error-${col}"]`) as HTMLElement;
@@ -1461,16 +1460,16 @@ export default function ResultsPage() {
                                 },
                               },
                               {
-                                label: '导出数据 (CSV)',
+                                label: 'Export Data (CSV)',
                                 format: 'csv',
                                 onClick: () => {
                                   const chartData = results.predictions.map((pred: any) => {
                                     const error = pred[col] - pred[`${col}_predicted`];
                                     return {
-                                      样本索引: pred.sample_index !== undefined ? pred.sample_index : pred.ID,
-                                      误差: error.toFixed(3),
-                                      绝对误差: Math.abs(error).toFixed(3),
-                                      相对误差: ((Math.abs(error) / Math.abs(pred[col])) * 100).toFixed(2) + '%',
+                                      Sample_Index: pred.sample_index !== undefined ? pred.sample_index : pred.ID,
+                                      Error: error.toFixed(3),
+                                      Absolute_Error: Math.abs(error).toFixed(3),
+                                      Relative_Error: ((Math.abs(error) / Math.abs(pred[col])) * 100).toFixed(2) + '%',
                                     };
                                   });
                                   exportToCSV(
@@ -1508,14 +1507,14 @@ export default function ResultsPage() {
 
                 <div className="flex justify-between items-center mb-6">
                   <h3 className="text-lg font-semibold text-gray-900">
-                    预测值 vs 真实值散点图
+                    Predicted vs Actual Scatter Plot
                   </h3>
                   <div className="flex items-center gap-3">
                     <ExportButton
-                      label="导出散点图"
+                      label="Export Scatter Plot"
                       options={[
                         {
-                          label: '导出图片 (PNG)',
+                          label: 'Export Image (PNG)',
                           format: 'png',
                           onClick: async () => {
                             const chartElement = document.querySelector('[data-chart-type="scatter"]') as HTMLElement;
@@ -1528,15 +1527,15 @@ export default function ResultsPage() {
                           },
                         },
                         {
-                          label: '导出数据 (CSV)',
+                          label: 'Export Data (CSV)',
                           format: 'csv',
                           onClick: () => {
                             const scatterData = results.predictions.map((pred: any) => ({
-                              样本索引: pred.sample_index !== undefined ? pred.sample_index : pred.ID,
-                              真实值: pred[selectedTarget],
-                              预测值: pred[`${selectedTarget}_predicted`],
-                              绝对误差: Math.abs(pred[selectedTarget] - pred[`${selectedTarget}_predicted`]).toFixed(3),
-                              相对误差: ((Math.abs(pred[selectedTarget] - pred[`${selectedTarget}_predicted`]) / Math.abs(pred[selectedTarget])) * 100).toFixed(2) + '%',
+                              Sample_Index: pred.sample_index !== undefined ? pred.sample_index : pred.ID,
+                              Actual_Value: pred[selectedTarget],
+                              Predicted_Value: pred[`${selectedTarget}_predicted`],
+                              Absolute_Error: Math.abs(pred[selectedTarget] - pred[`${selectedTarget}_predicted`]).toFixed(3),
+                              Relative_Error: ((Math.abs(pred[selectedTarget] - pred[`${selectedTarget}_predicted`]) / Math.abs(pred[selectedTarget])) * 100).toFixed(2) + '%',
                             }));
                             exportToCSV(
                               scatterData,
@@ -1546,7 +1545,7 @@ export default function ResultsPage() {
                         },
                       ]}
                     />
-                    <label className="text-sm font-medium text-gray-700">选择目标属性:</label>
+                    <label className="text-sm font-medium text-gray-700">Select Target Property:</label>
                     <select
                       value={selectedTarget}
                       onChange={(e) => setSelectedTarget(e.target.value)}
@@ -1584,13 +1583,13 @@ export default function ResultsPage() {
               <div>
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold text-gray-900">
-                    Pareto 前沿分析
+                    Pareto Front Analysis
                   </h3>
                   <ExportButton
-                    label="导出 Pareto 分析"
+                    label="Export Pareto Analysis"
                     options={[
                       {
-                        label: '导出图片 (PNG)',
+                        label: 'Export Image (PNG)',
                         format: 'png',
                         onClick: async () => {
                           const chartElement = document.querySelector('[data-chart-type="pareto"]') as HTMLElement;
@@ -1603,14 +1602,14 @@ export default function ResultsPage() {
                         },
                       },
                       {
-                        label: '导出坐标数据 (CSV)',
+                        label: 'Export Coordinate Data (CSV)',
                         format: 'csv',
                         onClick: () => {
                           const paretoData = paretoAnalysis.pareto_points.map((point: any) => ({
-                            样本索引: point.index,
+                            Sample_Index: point.index,
                             ...targetColumns.reduce((acc: any, col: string) => {
-                              acc[`${col}_真实值`] = point[col];
-                              acc[`${col}_预测值`] = point[`${col}_predicted`];
+                              acc[`${col}_Actual`] = point[col];
+                              acc[`${col}_Predicted`] = point[`${col}_predicted`];
                               return acc;
                             }, {}),
                           }));
@@ -1621,7 +1620,7 @@ export default function ResultsPage() {
                         },
                       },
                       {
-                        label: '导出指标 (CSV)',
+                        label: 'Export Metrics (CSV)',
                         format: 'csv',
                         onClick: () => {
                           const metricsData = [

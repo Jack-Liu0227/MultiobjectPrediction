@@ -1,6 +1,6 @@
 /**
- * 帕累托前沿图组件
- * 展示真实值与预测值的帕累托前沿
+ * Pareto Front Chart Component
+ * Displays Pareto front of actual and predicted values
  */
 
 import React, { useMemo } from 'react';
@@ -22,8 +22,8 @@ interface ParetoFrontChartProps {
   predictions: any[];
   targetColumns: string[];
   paretoIndices?: number[];
-  xAxisKey?: string; // 第一个目标列
-  yAxisKey?: string; // 第二个目标列
+  xAxisKey?: string; // First target column
+  yAxisKey?: string; // Second target column
   showParetoLine?: boolean;
 }
 
@@ -47,7 +47,7 @@ const ParetoFrontChart = React.memo(function ParetoFrontChart({
   const xKey = xAxisKey || targetColumns[0];
   const yKey = yAxisKey || targetColumns[1];
 
-  // 处理数据点
+  // Process data points
   const { actualData, predictedData, paretoLine } = useMemo(() => {
     const actualPoints: DataPoint[] = [];
     const predictedPoints: DataPoint[] = [];
@@ -73,7 +73,7 @@ const ParetoFrontChart = React.memo(function ParetoFrontChart({
 
       if (predicted_x != null && predicted_y != null) {
         predictedPoints.push({
-          actual_x: predicted_x,  // 预测值散点使用 predicted 坐标
+          actual_x: predicted_x,  // Predicted scatter uses predicted coordinates
           actual_y: predicted_y,
           predicted_x,
           predicted_y,
@@ -83,7 +83,7 @@ const ParetoFrontChart = React.memo(function ParetoFrontChart({
       }
     });
 
-    // 计算帕累托前沿线（按 x 排序）
+    // Calculate Pareto front line (sorted by x)
     const paretoPoints = predictedPoints
       .filter(p => p.isPareto)
       .sort((a, b) => a.predicted_x - b.predicted_x);
@@ -95,21 +95,21 @@ const ParetoFrontChart = React.memo(function ParetoFrontChart({
     };
   }, [predictions, xKey, yKey, paretoIndices]);
 
-  // 自定义 Tooltip
+  // Custom Tooltip
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
         <div className="bg-white p-3 border border-gray-200 rounded shadow-lg text-sm">
-          <p className="font-semibold mb-1">样本 #{data.index + 1}</p>
+          <p className="font-semibold mb-1">Sample #{data.index + 1}</p>
           <p className="text-blue-600">
-            真实值: {xKey}={data.actual_x?.toFixed(2)}, {yKey}={data.actual_y?.toFixed(2)}
+            Actual: {xKey}={data.actual_x?.toFixed(2)}, {yKey}={data.actual_y?.toFixed(2)}
           </p>
           <p className="text-red-600">
-            预测值: {xKey}={data.predicted_x?.toFixed(2)}, {yKey}={data.predicted_y?.toFixed(2)}
+            Predicted: {xKey}={data.predicted_x?.toFixed(2)}, {yKey}={data.predicted_y?.toFixed(2)}
           </p>
           {data.isPareto && (
-            <p className="text-green-600 font-medium mt-1">★ Pareto 最优解</p>
+            <p className="text-green-600 font-medium mt-1">★ Pareto Optimal</p>
           )}
         </div>
       );
@@ -120,7 +120,7 @@ const ParetoFrontChart = React.memo(function ParetoFrontChart({
   if (targetColumns.length < 2) {
     return (
       <div className="p-6 text-center text-gray-500">
-        需要至少 2 个目标列才能显示帕累托前沿图
+        At least 2 target columns are required to display Pareto front chart
       </div>
     );
   }
@@ -128,21 +128,21 @@ const ParetoFrontChart = React.memo(function ParetoFrontChart({
   return (
     <div className="w-full">
       <h3 className="text-lg font-semibold text-gray-900 mb-4">
-        帕累托前沿图 ({xKey} vs {yKey})
+        Pareto Front Chart ({xKey} vs {yKey})
       </h3>
-      
+
       <div className="mb-4 flex items-center gap-6 text-sm">
         <div className="flex items-center gap-2">
           <span className="w-3 h-3 rounded-full bg-blue-500"></span>
-          <span className="text-gray-600">真实值</span>
+          <span className="text-gray-600">Actual Values</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="w-3 h-3 rounded-full bg-red-500"></span>
-          <span className="text-gray-600">预测值</span>
+          <span className="text-gray-600">Predicted Values</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="w-4 h-0.5 bg-green-500"></span>
-          <span className="text-gray-600">Pareto 前沿</span>
+          <span className="text-gray-600">Pareto Front</span>
         </div>
       </div>
 
@@ -166,26 +166,26 @@ const ParetoFrontChart = React.memo(function ParetoFrontChart({
           <Tooltip content={<CustomTooltip />} />
           <Legend />
 
-          {/* 真实值散点（蓝色） */}
+          {/* Actual value scatter (blue) */}
           <Scatter
-            name="真实值"
+            name="Actual Values"
             data={actualData}
             fill="#3b82f6"
             shape="circle"
           />
 
-          {/* 预测值散点（红色） */}
+          {/* Predicted value scatter (red) */}
           <Scatter
-            name="预测值"
+            name="Predicted Values"
             data={predictedData}
             fill="#ef4444"
             shape="triangle"
           />
 
-          {/* Pareto 前沿线（绿色） */}
+          {/* Pareto front line (green) */}
           {showParetoLine && paretoLine.length > 0 && (
             <Scatter
-              name="Pareto 前沿"
+              name="Pareto Front"
               data={paretoLine}
               fill="#10b981"
               shape="star"
