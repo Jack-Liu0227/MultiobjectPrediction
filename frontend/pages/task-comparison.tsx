@@ -13,6 +13,7 @@ import ExportButton from '@/components/ExportButton';
 import { exportToCSV, exportToExcel, exportToHTML, exportToPNG, generateFileName, exportToExcelMultiSheet } from '@/lib/exportUtils';
 import { useConfidenceFilter } from '@/hooks/useConfidenceFilter';
 import { ConfidenceFilter } from '@/components/ConfidenceFilter';
+import { calculateMetricsByConfidence, getMetricsForConfidence, type MetricsByConfidence } from '@/lib/metricsCalculator';
 
 interface Task {
   task_id: string;

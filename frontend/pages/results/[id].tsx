@@ -20,6 +20,7 @@ import {
 } from '@/lib/exportUtils';
 import { useConfidenceFilter } from '@/hooks/useConfidenceFilter';
 import { ConfidenceFilter } from '@/components/ConfidenceFilter';
+import { calculateMetricsByConfidence, getMetricsForConfidence, type MetricsByConfidence } from '@/lib/metricsCalculator';
 
 // 图表加载占位组件
 const ChartLoading = ({ height = 'h-80' }: { height?: string }) => (
@@ -89,6 +90,12 @@ export default function ResultsPage() {
 
   // 置信度筛选 Hook
   const { confidenceFilter, setConfidenceFilter, filterByConfidence, getFilterStats } = useConfidenceFilter();
+
+  // 指标置信度筛选（独立于数据筛选）
+  const [metricsConfidenceFilter, setMetricsConfidenceFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
+
+  // 按置信度分组的指标
+  const [metricsByConfidence, setMetricsByConfidence] = useState<MetricsByConfidence | null>(null);
 
   // 使用 useCallback 确保函数引用稳定，避免重复创建定时器
   const stopPolling = useCallback(() => {
@@ -259,6 +266,13 @@ export default function ResultsPage() {
       // 使用 process_details 构建的 predictions 替换原有的
       resultsData.predictions = predictions;
       setResults(resultsData);
+
+      // 计算按置信度分组的指标
+      const targetColumns = Object.keys(resultsData.metrics || {});
+      if (targetColumns.length > 0 && predictions.length > 0) {
+        const groupedMetrics = calculateMetricsByConfidence(predictions, targetColumns);
+        setMetricsByConfidence(groupedMetrics);
+      }
 
       // 设置 Pareto 分析（如果存在）
       if (paretoData) {
@@ -1103,16 +1117,20 @@ export default function ResultsPage() {
                         label: '导出为 CSV',
                         format: 'csv',
                         onClick: () => {
+                          const currentMetrics = metricsByConfidence
+                            ? getMetricsForConfidence(metricsByConfidence, metricsConfidenceFilter)
+                            : results.metrics;
                           const metricsData = targetColumns.map(col => ({
                             目标属性: col,
-                            R2_Score: results.metrics[col]?.r2?.toFixed(4) || '-',
-                            RMSE: results.metrics[col]?.rmse?.toFixed(4) || '-',
-                            MAE: results.metrics[col]?.mae?.toFixed(4) || '-',
-                            MAPE: results.metrics[col]?.mape?.toFixed(2) || '-',
+                            置信度级别: metricsConfidenceFilter === 'all' ? '总体' : metricsConfidenceFilter,
+                            R2_Score: currentMetrics[col]?.r2?.toFixed(4) || '-',
+                            RMSE: currentMetrics[col]?.rmse?.toFixed(4) || '-',
+                            MAE: currentMetrics[col]?.mae?.toFixed(4) || '-',
+                            MAPE: currentMetrics[col]?.mape?.toFixed(2) || '-',
                           }));
                           exportToCSV(
                             metricsData,
-                            generateFileName('prediction_metrics', 'csv')
+                            generateFileName(`prediction_metrics_${metricsConfidenceFilter}`, 'csv')
                           );
                         },
                       },
@@ -1120,16 +1138,20 @@ export default function ResultsPage() {
                         label: '导出为 Excel',
                         format: 'excel',
                         onClick: () => {
+                          const currentMetrics = metricsByConfidence
+                            ? getMetricsForConfidence(metricsByConfidence, metricsConfidenceFilter)
+                            : results.metrics;
                           const metricsData = targetColumns.map(col => ({
                             目标属性: col,
-                            R2_Score: results.metrics[col]?.r2?.toFixed(4) || '-',
-                            RMSE: results.metrics[col]?.rmse?.toFixed(4) || '-',
-                            MAE: results.metrics[col]?.mae?.toFixed(4) || '-',
-                            MAPE: results.metrics[col]?.mape?.toFixed(2) || '-',
+                            置信度级别: metricsConfidenceFilter === 'all' ? '总体' : metricsConfidenceFilter,
+                            R2_Score: currentMetrics[col]?.r2?.toFixed(4) || '-',
+                            RMSE: currentMetrics[col]?.rmse?.toFixed(4) || '-',
+                            MAE: currentMetrics[col]?.mae?.toFixed(4) || '-',
+                            MAPE: currentMetrics[col]?.mape?.toFixed(2) || '-',
                           }));
                           exportToExcel(
                             metricsData,
-                            generateFileName('prediction_metrics', 'xlsx'),
+                            generateFileName(`prediction_metrics_${metricsConfidenceFilter}`, 'xlsx'),
                             '评估指标'
                           );
                         },
@@ -1138,16 +1160,20 @@ export default function ResultsPage() {
                         label: '导出为 HTML',
                         format: 'html',
                         onClick: () => {
+                          const currentMetrics = metricsByConfidence
+                            ? getMetricsForConfidence(metricsByConfidence, metricsConfidenceFilter)
+                            : results.metrics;
                           const metricsData = targetColumns.map(col => ({
                             目标属性: col,
-                            R2_Score: results.metrics[col]?.r2?.toFixed(4) || '-',
-                            RMSE: results.metrics[col]?.rmse?.toFixed(4) || '-',
-                            MAE: results.metrics[col]?.mae?.toFixed(4) || '-',
-                            MAPE: results.metrics[col]?.mape?.toFixed(2) || '-',
+                            置信度级别: metricsConfidenceFilter === 'all' ? '总体' : metricsConfidenceFilter,
+                            R2_Score: currentMetrics[col]?.r2?.toFixed(4) || '-',
+                            RMSE: currentMetrics[col]?.rmse?.toFixed(4) || '-',
+                            MAE: currentMetrics[col]?.mae?.toFixed(4) || '-',
+                            MAPE: currentMetrics[col]?.mape?.toFixed(2) || '-',
                           }));
                           exportToHTML(
                             metricsData,
-                            generateFileName('prediction_metrics', 'html'),
+                            generateFileName(`prediction_metrics_${metricsConfidenceFilter}`, 'html'),
                             `评估指标 - 任务 ${id}`
                           );
                         },
@@ -1155,9 +1181,25 @@ export default function ResultsPage() {
                     ]}
                   />
                 </div>
+
+                {/* 置信度筛选器 */}
+                {metricsByConfidence && (
+                  <div className="mb-6">
+                    <ConfidenceFilter
+                      value={metricsConfidenceFilter}
+                      onChange={setMetricsConfidenceFilter}
+                      stats={getFilterStats(results.predictions)}
+                    />
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {targetColumns.map((col) => {
-                    const metrics = results.metrics[col];
+                    // 使用按置信度分组的指标（如果可用）
+                    const currentMetrics = metricsByConfidence
+                      ? getMetricsForConfidence(metricsByConfidence, metricsConfidenceFilter)
+                      : results.metrics;
+                    const metrics = currentMetrics[col];
                     if (!metrics) return null;
 
                     return (

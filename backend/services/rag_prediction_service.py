@@ -715,7 +715,7 @@ class RAGPredictionService:
         predicted_at = datetime.now().isoformat()
 
         # 提取 confidence 字段
-        from backend.services.simple_rag_engine import LLMResponseParser
+        from services.simple_rag_engine import LLMResponseParser
         parser = LLMResponseParser()
         confidence = parser.extract_confidence(result.get('llm_response', ''))
 
@@ -936,15 +936,59 @@ class RAGPredictionService:
                     # 创建失败结果
                     from datetime import datetime
                     test_row = sampled_test_df.loc[test_idx]
+
+                    # 构建样本文本（即使预测失败也需要显示）
+                    from services.sample_text_builder import SampleTextBuilder
+
+                    # 格式化组分信息（如果有）
+                    test_composition_str = None
+                    if composition_columns:
+                        unit_type, comp_str = self._format_composition(test_row, composition_columns)
+                        if unit_type:
+                            test_composition_str = comp_str  # 不包含单位前缀
+                        else:
+                            test_composition_str = comp_str
+
+                    # 提取工艺列数据
+                    processing_dict = {}
+                    if config.processing_column:
+                        for proc_col in config.processing_column:
+                            if proc_col in test_row.index:
+                                processing_value = test_row[proc_col]
+                                if pd.notna(processing_value) and str(processing_value).strip():
+                                    processing_dict[proc_col] = processing_value
+
+                    # 提取特征列数据
+                    feature_dict = {}
+                    if config.feature_columns:
+                        for feat_col in config.feature_columns:
+                            if feat_col in test_row.index:
+                                feat_value = test_row[feat_col]
+                                if pd.notna(feat_value):
+                                    feature_dict[feat_col] = feat_value
+
+                    # 构建统一的样本文本
+                    sample_text = SampleTextBuilder.build_sample_text(
+                        composition=test_composition_str,
+                        processing_columns=processing_dict if processing_dict else None,
+                        feature_columns=feature_dict if feature_dict else None
+                    )
+
+                    # 应用列名映射（从自定义模板中获取，如果没有则使用默认值）
+                    column_name_mapping = None
+                    if config.prompt_template and "column_name_mapping" in config.prompt_template:
+                        column_name_mapping = config.prompt_template["column_name_mapping"]
+                    sample_text = self._apply_column_name_mapping(sample_text, column_name_mapping)
+
                     error_result = {
                         'sample_index': int(test_idx),
-                        'composition': '',
-                        'processing': '',
+                        'sample_text': sample_text,  # 添加统一的样本文本
                         'predictions': {col: None for col in config.target_columns},
                         'prompt': '',
                         'llm_response': f'Error: {str(e)}',
                         'similar_samples': [],
-                        'predicted_at': datetime.now().isoformat()  # 错误发生时间
+                        'predicted_at': datetime.now().isoformat(),  # 错误发生时间
+                        'confidence': None  # 错误情况下没有置信度
                     }
 
                     # 添加 ID 字段（如果存在）

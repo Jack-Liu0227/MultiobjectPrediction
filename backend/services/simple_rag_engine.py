@@ -52,7 +52,7 @@ class JSONExtractor:
 
     @staticmethod
     def extract_json_objects(text: str) -> List[str]:
-        """从文本中提取所有 JSON 对象（非贪婪匹配）
+        """从文本中提取所有 JSON 对象（支持深度嵌套）
 
         Args:
             text: 输入文本
@@ -60,9 +60,50 @@ class JSONExtractor:
         Returns:
             提取到的 JSON 字符串列表
         """
-        # 使用非贪婪匹配，支持嵌套的 JSON 对象
-        pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-        matches = re.findall(pattern, text, re.DOTALL)
+        # 使用栈来匹配嵌套的花括号，支持任意深度的嵌套
+        matches = []
+        i = 0
+        while i < len(text):
+            if text[i] == '{':
+                # 找到一个 JSON 对象的开始
+                start = i
+                stack = ['{']
+                i += 1
+                in_string = False
+                escape_next = False
+
+                while i < len(text) and stack:
+                    char = text[i]
+
+                    # 处理转义字符
+                    if escape_next:
+                        escape_next = False
+                        i += 1
+                        continue
+
+                    if char == '\\':
+                        escape_next = True
+                        i += 1
+                        continue
+
+                    # 处理字符串
+                    if char == '"':
+                        in_string = not in_string
+                    elif not in_string:
+                        if char == '{':
+                            stack.append('{')
+                        elif char == '}':
+                            stack.pop()
+
+                    i += 1
+
+                # 如果栈为空，说明找到了一个完整的 JSON 对象
+                if not stack:
+                    json_str = text[start:i]
+                    matches.append(json_str)
+            else:
+                i += 1
+
         return matches
 
     @staticmethod

@@ -36,7 +36,7 @@ class TaskComparisonService:
 
     def load_task_predictions(self, task_id: str) -> Optional[pd.DataFrame]:
         """
-        加载任务的预测结果
+        加载任务的预测结果（包含 confidence 字段）
 
         Args:
             task_id: 任务ID
@@ -51,6 +51,36 @@ class TaskComparisonService:
                 return None
 
             df = pd.read_csv(predictions_file)
+
+            # 尝试加载 process_details.json 以获取 confidence 信息
+            try:
+                import json
+                process_details_file = self.results_dir / task_id / "process_details.json"
+                if process_details_file.exists():
+                    with open(process_details_file, 'r', encoding='utf-8') as f:
+                        process_details = json.load(f)
+
+                    # 创建 sample_index 到 confidence 的映射
+                    confidence_map = {}
+                    for detail in process_details:
+                        sample_idx = detail.get('sample_index')
+                        confidence = detail.get('confidence')
+                        if sample_idx is not None:
+                            confidence_map[sample_idx] = confidence
+
+                    # 将 confidence 添加到 DataFrame
+                    if 'sample_index' in df.columns:
+                        df['confidence'] = df['sample_index'].map(confidence_map)
+                    else:
+                        # 如果没有 sample_index 列，使用索引
+                        df['confidence'] = df.index.map(confidence_map)
+
+                    logger.info(f"成功加载任务 {task_id} 的 confidence 信息")
+            except Exception as e:
+                logger.warning(f"加载任务 {task_id} 的 confidence 信息失败: {e}")
+                # 如果加载失败，添加空的 confidence 列
+                df['confidence'] = None
+
             logger.info(f"成功加载任务 {task_id} 的预测结果，共 {len(df)} 个样本")
             return df
         except Exception as e:
@@ -748,10 +778,21 @@ class TaskComparisonService:
                 tolerance
             )
 
+            # 获取 confidence 信息（从第一个任务的数据中）
+            confidence = None
+            if 'confidence' in first_task_df.columns:
+                try:
+                    confidence_value = first_task_df.loc[sample_idx, 'confidence']
+                    if pd.notna(confidence_value):
+                        confidence = str(confidence_value).lower()
+                except Exception:
+                    pass
+
             # 构建详情字典
             detail = {
                 'sample_index': int(sample_idx),
                 'consistency_level': level,
+                'confidence': confidence,  # 添加 confidence 字段
                 'targets': {}
             }
 
