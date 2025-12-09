@@ -18,6 +18,8 @@ import {
   generateFileName,
   extractChartData,
 } from '@/lib/exportUtils';
+import { useConfidenceFilter } from '@/hooks/useConfidenceFilter';
+import { ConfidenceFilter } from '@/components/ConfidenceFilter';
 
 // 图表加载占位组件
 const ChartLoading = ({ height = 'h-80' }: { height?: string }) => (
@@ -84,6 +86,9 @@ export default function ResultsPage() {
 
   // AbortController 用于取消请求
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // 置信度筛选 Hook
+  const { confidenceFilter, setConfidenceFilter, filterByConfidence, getFilterStats } = useConfidenceFilter();
 
   // 使用 useCallback 确保函数引用稳定，避免重复创建定时器
   const stopPolling = useCallback(() => {
@@ -235,6 +240,7 @@ export default function ResultsPage() {
           sample_index: detail.sample_index,
           ID: detail.ID,
           predicted_at: detail.predicted_at || null,
+          confidence: detail.confidence || null, // 添加 confidence 字段
         };
         // 添加真实值和预测值
         if (detail.true_values) {
@@ -865,13 +871,22 @@ export default function ResultsPage() {
           <div className="p-6">
             {activeTab === 'predictions' && (
               <div>
+                {/* 置信度筛选器 */}
+                <div className="mb-6">
+                  <ConfidenceFilter
+                    value={confidenceFilter}
+                    onChange={setConfidenceFilter}
+                    stats={getFilterStats(results.predictions)}
+                  />
+                </div>
+
                 <div className="flex justify-between items-center mb-4">
                   <div>
                     <h3 className="text-lg font-semibold text-gray-900">
                       预测数据表格
                     </h3>
                     <p className="text-sm text-gray-500 mt-1">
-                      共 {results.predictions.length} 条数据，当前显示第 {(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, results.predictions.length)} 条
+                      共 {filterByConfidence(results.predictions).length} 条数据，当前显示第 {(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, filterByConfidence(results.predictions).length)} 条
                     </p>
                   </div>
                   <div className="flex items-center space-x-4">
@@ -963,7 +978,7 @@ export default function ResultsPage() {
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {results.predictions.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((row: any, idx: number) => (
+                      {filterByConfidence(results.predictions).slice((currentPage - 1) * pageSize, currentPage * pageSize).map((row: any, idx: number) => (
                         <tr
                           key={idx}
                           className="hover:bg-blue-50 cursor-pointer transition-colors"
@@ -1032,10 +1047,10 @@ export default function ResultsPage() {
                 </div>
 
                 {/* 分页控件 */}
-                {results.predictions.length > pageSize && (
+                {filterByConfidence(results.predictions).length > pageSize && (
                   <div className="flex items-center justify-between mt-4 px-4">
                     <div className="text-sm text-gray-600">
-                      显示第 {(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, results.predictions.length)} 条，共 {results.predictions.length} 条
+                      显示第 {(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, filterByConfidence(results.predictions).length)} 条，共 {filterByConfidence(results.predictions).length} 条
                     </div>
                     <div className="flex items-center space-x-2">
                       <button
@@ -1053,18 +1068,18 @@ export default function ResultsPage() {
                         上一页
                       </button>
                       <span className="text-sm text-gray-600">
-                        第 {currentPage} / {Math.ceil(results.predictions.length / pageSize)} 页
+                        第 {currentPage} / {Math.ceil(filterByConfidence(results.predictions).length / pageSize)} 页
                       </span>
                       <button
                         onClick={() => setCurrentPage(currentPage + 1)}
-                        disabled={currentPage >= Math.ceil(results.predictions.length / pageSize)}
+                        disabled={currentPage >= Math.ceil(filterByConfidence(results.predictions).length / pageSize)}
                         className="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                       >
                         下一页
                       </button>
                       <button
-                        onClick={() => setCurrentPage(Math.ceil(results.predictions.length / pageSize))}
-                        disabled={currentPage >= Math.ceil(results.predictions.length / pageSize)}
+                        onClick={() => setCurrentPage(Math.ceil(filterByConfidence(results.predictions).length / pageSize))}
+                        disabled={currentPage >= Math.ceil(filterByConfidence(results.predictions).length / pageSize)}
                         className="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                       >
                         末页
@@ -1163,6 +1178,15 @@ export default function ResultsPage() {
 
             {activeTab === 'charts' && (
               <div className="space-y-8">
+                {/* 置信度筛选器 */}
+                <div className="mb-6">
+                  <ConfidenceFilter
+                    value={confidenceFilter}
+                    onChange={setConfidenceFilter}
+                    stats={getFilterStats(results.predictions)}
+                  />
+                </div>
+
                 {/* 帕累托前沿图 */}
                 {targetColumns.length >= 2 && (
                   <div className="bg-gray-50 rounded-lg p-6">
@@ -1212,7 +1236,7 @@ export default function ResultsPage() {
                     </div>
                     <div data-chart-type="pareto-charts-tab">
                       <ParetoFrontChart
-                        predictions={results.predictions}
+                        predictions={filterByConfidence(results.predictions)}
                         targetColumns={targetColumns}
                         paretoIndices={paretoAnalysis?.pareto_indices || []}
                         showParetoLine={true}
@@ -1313,7 +1337,7 @@ export default function ResultsPage() {
                         </div>
                         <div data-chart-type={`comparison-${col}`}>
                           <PredictionComparisonChart
-                            predictions={results.predictions}
+                            predictions={filterByConfidence(results.predictions)}
                             targetColumn={col}
                             metrics={results.metrics?.[col]}
                           />
@@ -1418,7 +1442,7 @@ export default function ResultsPage() {
                         </div>
                         <div data-chart-type={`error-${col}`}>
                           <ErrorDistributionChart
-                            predictions={results.predictions}
+                            predictions={filterByConfidence(results.predictions)}
                             targetColumn={col}
                           />
                         </div>
@@ -1431,6 +1455,15 @@ export default function ResultsPage() {
 
             {activeTab === 'scatter' && (
               <div>
+                {/* 置信度筛选器 */}
+                <div className="mb-6">
+                  <ConfidenceFilter
+                    value={confidenceFilter}
+                    onChange={setConfidenceFilter}
+                    stats={getFilterStats(results.predictions)}
+                  />
+                </div>
+
                 <div className="flex justify-between items-center mb-6">
                   <h3 className="text-lg font-semibold text-gray-900">
                     预测值 vs 真实值散点图
@@ -1487,7 +1520,7 @@ export default function ResultsPage() {
                 {selectedTarget && (
                   <div className="bg-white rounded-lg border border-gray-200 p-6" data-chart-type="scatter">
                     <PredictionScatterChart
-                      predictions={results.predictions}
+                      predictions={filterByConfidence(results.predictions)}
                       targetColumn={selectedTarget}
                       onPointClick={(dataPoint, index) => {
                         setSelectedPoint({ ...dataPoint, index });

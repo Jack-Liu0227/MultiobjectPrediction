@@ -11,6 +11,8 @@ import ConsistencyDistributionChart from '@/components/charts/ConsistencyDistrib
 import { taskEvents } from '@/lib/taskEvents';
 import ExportButton from '@/components/ExportButton';
 import { exportToCSV, exportToExcel, exportToHTML, exportToPNG, generateFileName, exportToExcelMultiSheet } from '@/lib/exportUtils';
+import { useConfidenceFilter } from '@/hooks/useConfidenceFilter';
+import { ConfidenceFilter } from '@/components/ConfidenceFilter';
 
 interface Task {
   task_id: string;
@@ -66,6 +68,9 @@ export default function TaskComparisonPage() {
 
   // 任务显示模式: 'id' | 'note' | 'filename' | 'custom'
   const [taskDisplayMode, setTaskDisplayMode] = useState<'id' | 'note' | 'filename' | 'custom'>('note');
+
+  // 置信度筛选 Hook
+  const { confidenceFilter, setConfidenceFilter, filterByConfidence, getFilterStats } = useConfidenceFilter();
 
   // Load localStorage values after mount (avoid hydration errors)
   useEffect(() => {
@@ -1134,6 +1139,15 @@ export default function TaskComparisonPage() {
                 {/* Render results */}
                 {Object.entries(comparisonResults).map(([key, result]: [string, any]) => (
                   <div key={key} className="space-y-6">
+                    {/* 置信度筛选器 */}
+                    <div className="mb-6">
+                      <ConfidenceFilter
+                        value={confidenceFilter}
+                        onChange={setConfidenceFilter}
+                        stats={getFilterStats(result.sample_details || [])}
+                      />
+                    </div>
+
                     {/* Target Column Header with Save and Export Buttons */}
                     <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg shadow-sm border-2 border-blue-200 p-4">
                       <div className="flex items-center justify-between">
@@ -1303,6 +1317,7 @@ export default function TaskComparisonPage() {
                         <ConsistencyDistributionChart
                           consistencyDistribution={result.consistency_distribution}
                           nTasks={result.n_tasks}
+                          filteredSampleCount={filterByConfidence(result.sample_details || []).length}
                         />
                       </div>
                     </div>
@@ -1363,7 +1378,10 @@ export default function TaskComparisonPage() {
                       </div>
                       <div data-chart-type="multi-target-scatter">
                         <MultiTargetScatterChart
-                          comparisonData={result}
+                          comparisonData={{
+                            ...result,
+                            sample_details: filterByConfidence(result.sample_details || [])
+                          }}
                           taskNames={Object.fromEntries(
                             tasks
                               .filter(t => result.task_ids.includes(t.task_id))

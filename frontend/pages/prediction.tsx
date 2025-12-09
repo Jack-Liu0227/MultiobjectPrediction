@@ -95,6 +95,34 @@ export default function PredictionPage() {
   const [availableModels, setAvailableModels] = useState<any[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
 
+  // 自动保存配置到 localStorage（当用户修改列选择时）
+  useEffect(() => {
+    if (typeof window !== 'undefined' && uploadedFile) {
+      // 保存列配置和数据集信息
+      const configToSave = {
+        datasetId: selectedDatasetId || uploadedFile.file_id,  // 保存数据集 ID（优先使用 selectedDatasetId）
+        fileId: uploadedFile.file_id,  // 保存文件 ID
+        datasetName: uploadedFile.filename,  // 保存数据集名称
+        rowCount: uploadedFile.row_count,  // 保存行数
+        columnCount: allColumns.length,  // 保存列数
+        compositionColumns: settings.compositionColumns,
+        processingColumn: settings.processingColumn,
+        targetColumns: settings.targetColumns,
+        featureColumns: settings.featureColumns,
+      };
+      localStorage.setItem('predictionConfig', JSON.stringify(configToSave));
+      console.log('✓ 列配置已保存到 localStorage:', configToSave);
+    }
+  }, [
+    settings.compositionColumns,
+    settings.processingColumn,
+    settings.targetColumns,
+    settings.featureColumns,
+    uploadedFile,
+    selectedDatasetId,
+    allColumns.length
+  ]);
+
   // 加载可用 LLM 模型
   const loadAvailableModels = async () => {
     try {

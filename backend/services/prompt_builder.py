@@ -289,18 +289,39 @@ class PromptBuilder:
 
         # 安全的字符串格式化函数（忽略缺失的占位符）
         def safe_format(text: str, vars_dict: dict) -> str:
-            """安全地格式化字符串，忽略缺失的占位符"""
+            """
+            安全地格式化字符串，忽略缺失的占位符
+
+            特殊处理：
+            1. 先将 {{ 和 }} 替换为临时占位符（避免与 format_map 冲突）
+            2. 执行格式化
+            3. 将临时占位符还原为 { 和 }
+            """
             try:
-                # 使用 str.format_map() 和 defaultdict 来处理缺失的键
-                from collections import defaultdict
+                # 步骤 1: 保护双层大括号（用于输出字面量大括号）
+                TEMP_OPEN = "<<<BRACE_OPEN>>>"
+                TEMP_CLOSE = "<<<BRACE_CLOSE>>>"
+                text = text.replace("{{", TEMP_OPEN).replace("}}", TEMP_CLOSE)
+
+                # 步骤 2: 使用 str.format_map() 和 SafeDict 来处理缺失的键
                 class SafeDict(dict):
                     def __missing__(self, key):
                         return '{' + key + '}'
-                return text.format_map(SafeDict(**vars_dict))
+                formatted_text = text.format_map(SafeDict(**vars_dict))
+
+                # 步骤 3: 还原双层大括号为单个大括号
+                formatted_text = formatted_text.replace(TEMP_OPEN, "{").replace(TEMP_CLOSE, "}")
+
+                return formatted_text
             except Exception as e:
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.warning(f"格式化字符串失败: {e}, 返回原始文本")
+                # 即使失败，也尝试还原双层大括号
+                try:
+                    text = text.replace(TEMP_OPEN, "{").replace(TEMP_CLOSE, "}")
+                except:
+                    pass
                 return text
 
         # 组装 prompt

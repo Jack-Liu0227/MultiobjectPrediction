@@ -714,6 +714,11 @@ class RAGPredictionService:
         from datetime import datetime
         predicted_at = datetime.now().isoformat()
 
+        # 提取 confidence 字段
+        from backend.services.simple_rag_engine import LLMResponseParser
+        parser = LLMResponseParser()
+        confidence = parser.extract_confidence(result.get('llm_response', ''))
+
         result_dict = {
             'sample_index': int(test_idx),
             'sample_text': sample_text,  # 统一的样本文本（已应用列名映射）
@@ -721,7 +726,8 @@ class RAGPredictionService:
             'prompt': result.get('prompt', ''),
             'llm_response': result.get('llm_response', ''),
             'similar_samples': similar_samples,
-            'predicted_at': predicted_at  # 预测生成时间戳
+            'predicted_at': predicted_at,  # 预测生成时间戳
+            'confidence': confidence  # 置信度 (high/medium/low 或 None)
         }
 
         # 添加 ID 字段（原始数据集中的行号）
@@ -996,7 +1002,8 @@ class RAGPredictionService:
                 'llm_response': result['llm_response'],
                 'similar_samples': result['similar_samples'],
                 'used_default_values': used_default_values,  # 记录使用默认值的目标属性
-                'predicted_at': result.get('predicted_at')  # 预测生成时间戳
+                'predicted_at': result.get('predicted_at'),  # 预测生成时间戳
+                'confidence': result.get('confidence')  # 置信度 (high/medium/low 或 None)
             }
 
             # 添加 ID 字段（如果存在）

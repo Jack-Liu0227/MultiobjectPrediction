@@ -260,6 +260,36 @@ class LLMResponseParser:
 
         return predictions
 
+    def extract_confidence(self, text: str) -> Optional[str]:
+        """从 LLM 响应中提取 confidence 字段
+
+        Args:
+            text: LLM 响应文本
+
+        Returns:
+            置信度值 ("high", "medium", "low") 或 None
+        """
+        # 步骤1: 提取所有候选 JSON 字符串
+        json_candidates = self.json_extractor.extract_all_candidates(text)
+
+        # 步骤2: 尝试解析每个候选 JSON，查找 confidence 字段
+        for json_str in json_candidates:
+            try:
+                data = json.loads(json_str)
+
+                # 查找 confidence 字段
+                if 'confidence' in data:
+                    confidence = data['confidence']
+                    # 验证值是否有效
+                    if isinstance(confidence, str) and confidence.lower() in ['high', 'medium', 'low']:
+                        return confidence.lower()
+
+            except (json.JSONDecodeError, ValueError, KeyError):
+                continue
+
+        # 如果没有找到有效的 confidence 字段，返回 None
+        return None
+
 
 class PredictionValidator:
     """预测值验证器 - 验证和填充默认值"""
