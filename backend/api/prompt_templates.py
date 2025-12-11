@@ -30,7 +30,7 @@ class PromptTemplateData(BaseModel):
     predictions_json_template: str = Field(default="", description="自定义预测 JSON 模板（可选）")
     column_name_mapping: Optional[Dict[str, str]] = Field(
         default=None,
-        description="列名映射配置，例如 {'Processing': 'Heat treatment method'}"
+        description="列名映射配置，例如 {'Processing_Description': 'Heat treatment method'}"
     )
     apply_mapping_to_target: bool = Field(
         default=True,
@@ -63,7 +63,7 @@ class PromptPreviewRequest(BaseModel):
     predictions_json_template: str = Field(default="", description="自定义预测 JSON 模板（可选）")
     column_name_mapping: Optional[Dict[str, str]] = Field(
         default=None,
-        description="列名映射配置，例如 {'Processing': 'Heat treatment method'}"
+        description="列名映射配置，例如 {'Processing_Description': 'Heat treatment method'}"
     )
     apply_mapping_to_target: bool = Field(
         default=True,

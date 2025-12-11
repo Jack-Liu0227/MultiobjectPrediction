@@ -148,11 +148,30 @@ async def start_prediction(request: PredictionRequest, background_tasks: Backgro
             )
         else:
             # 创建新任务
+            # 计算数据统计信息
+            import pandas as pd
+            try:
+                df = pd.read_csv(actual_file_path)
+                total_rows = int(len(df))
+                # 计算有效行数（目标列非空且非0的行数）
+                valid_mask = pd.Series([True] * len(df))
+                for col in request.config.target_columns:
+                    if col in df.columns:
+                        valid_mask &= df[col].notna() & (df[col] != 0)
+                valid_rows = int(valid_mask.sum())
+                logger.info(f"数据统计: 总行数={total_rows}, 有效行数={valid_rows}")
+            except Exception as e:
+                logger.warning(f"无法计算数据统计: {e}")
+                total_rows = None
+                valid_rows = None
+
             # 构建任务数据，保留 dataset_id 或 file_id 信息
             task_data = {
                 "file_path": str(actual_file_path),
                 "filename": filename,
-                "config": request.config.dict()
+                "config": request.config.dict(),
+                "total_rows": total_rows,
+                "valid_rows": valid_rows
             }
 
             # 保存 dataset_id 或 file_id（优先保存 dataset_id）

@@ -8,6 +8,31 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 import os
+import logging
+import sys
+from pathlib import Path
+
+# 配置日志 - 使用 UTF-8 编码
+LOG_DIR = Path(__file__).parent.parent / "Logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+# 配置根日志记录器
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        # 控制台处理器
+        logging.StreamHandler(sys.stdout),
+        # 文件处理器 - 使用 UTF-8 编码
+        logging.FileHandler(
+            LOG_DIR / "backend.log",
+            mode='a',
+            encoding='utf-8'  # 关键：设置 UTF-8 编码
+        )
+    ]
+)
+
+logger = logging.getLogger(__name__)
 
 # HTTP 缓存中间件
 class CacheControlMiddleware(BaseHTTPMiddleware):
@@ -72,6 +97,8 @@ from api.dataset_split import router as dataset_split_router
 from api.llm_config import router as llm_config_router
 from api.prompt_templates import router as prompt_templates_router
 from api.task_comparison import router as task_comparison_router
+from api.iterative_prediction import router as iterative_prediction_router
+from api.task_maintenance import router as task_maintenance_router
 from routers.datasets import router as datasets_router
 
 # 注册路由
@@ -83,6 +110,8 @@ app.include_router(dataset_split_router, prefix="/api/dataset-split", tags=["dat
 app.include_router(llm_config_router, prefix="/api/llm", tags=["llm"])
 app.include_router(prompt_templates_router, prefix="/api/prompt-templates", tags=["prompt-templates"])
 app.include_router(task_comparison_router, prefix="/api/task-comparison", tags=["task-comparison"])
+app.include_router(iterative_prediction_router, prefix="/api/iterative-prediction", tags=["iterative-prediction"])
+app.include_router(task_maintenance_router, prefix="/api/task-maintenance", tags=["task-maintenance"])
 app.include_router(datasets_router)
 
 

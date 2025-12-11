@@ -44,6 +44,10 @@ class TaskDatabase:
                 message=task_data.get("message", ""),
                 file_id=task_data["file_id"],
                 filename=task_data["filename"],
+                total_rows=task_data.get("total_rows"),
+                valid_rows=task_data.get("valid_rows"),
+                original_total_rows=task_data.get("total_rows"),  # 保存原始数据集总行数
+                original_valid_rows=task_data.get("valid_rows"),  # 保存原始数据集有效行数
                 composition_column=config.get("composition_column"),
                 processing_column=config.get("processing_column"),
                 target_columns=config.get("target_columns", []),
@@ -99,12 +103,13 @@ class TaskDatabase:
             logger.info(f"Updated task: {task_id}")
             return True
     
-    def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+    def get_task(self, task_id: str, include_process_details: bool = True) -> Optional[Dict[str, Any]]:
         """
         获取任务信息
 
         Args:
             task_id: 任务ID
+            include_process_details: 是否包含 process_details（默认 True，单个任务查询时需要）
 
         Returns:
             任务信息字典，不存在返回 None
@@ -114,7 +119,7 @@ class TaskDatabase:
             if not task:
                 return None
 
-            return self._task_to_dict(task)
+            return self._task_to_dict(task, include_process_details=include_process_details)
     
     def _safe_json_field(self, value: Any, default: Any = None) -> Any:
         """
@@ -146,8 +151,14 @@ class TaskDatabase:
 
         return value
 
-    def _task_to_dict(self, task: Task) -> Dict[str, Any]:
-        """将 Task 对象转换为字典（安全处理 JSON 字段）"""
+    def _task_to_dict(self, task: Task, include_process_details: bool = False) -> Dict[str, Any]:
+        """
+        将 Task 对象转换为字典（安全处理 JSON 字段）
+
+        Args:
+            task: Task 对象
+            include_process_details: 是否包含 process_details（默认 False，避免列表查询时数据过大）
+        """
         try:
             # 安全处理 composition_column（可能是字符串或数组）
             composition_column = self._safe_json_field(task.composition_column, default=[])
@@ -155,20 +166,22 @@ class TaskDatabase:
             # 安全处理 target_columns（应该是数组）
             target_columns = self._safe_json_field(task.target_columns, default=[])
 
-            # 安全处理 process_details（应该是对象或数组）
-            process_details = self._safe_json_field(task.process_details, default=None)
-
             # 从 config_json 中读取额外配置
             config_json = task.config_json if isinstance(task.config_json, dict) else {}
             random_seed = config_json.get('random_seed')
             workers = config_json.get('workers')
 
-            return {
+            result = {
                 "task_id": task.task_id,
                 "status": task.status,
                 "progress": task.progress,
                 "message": task.message,
+                "file_id": task.file_id,  # 关联的数据集ID或文件ID
                 "filename": task.filename,
+                "total_rows": task.total_rows,
+                "valid_rows": task.valid_rows,
+                "original_total_rows": task.original_total_rows,  # 已废弃：不再使用
+                "original_valid_rows": task.original_valid_rows,  # 已废弃：不再使用
                 "composition_column": composition_column,
                 "processing_column": task.processing_column,
                 "target_columns": target_columns,
@@ -187,8 +200,15 @@ class TaskDatabase:
                 "sample_size": task.sample_size,
                 "workers": workers,
                 "note": task.note,
-                "process_details": process_details,
             }
+
+            # 只在明确需要时才包含 process_details（避免列表查询时数据过大）
+            if include_process_details:
+                process_details = self._safe_json_field(task.process_details, default=None)
+                result["process_details"] = process_details
+
+            return result
+
         except Exception as e:
             logger.error(f"Error converting task {task.task_id} to dict: {e}")
             # 返回基本信息，避免整个列表查询失败
@@ -216,7 +236,6 @@ class TaskDatabase:
                 "sample_size": task.sample_size,
                 "workers": None,
                 "note": task.note,
-                "process_details": None,
             }
 
     def list_tasks(
@@ -262,8 +281,9 @@ class TaskDatabase:
             offset = (page - 1) * page_size
             tasks = query.offset(offset).limit(page_size).all()
 
+            # 列表查询时不包含 process_details，避免数据过大
             return {
-                "tasks": [self._task_to_dict(task) for task in tasks],
+                "tasks": [self._task_to_dict(task, include_process_details=False) for task in tasks],
                 "total": total
             }
 

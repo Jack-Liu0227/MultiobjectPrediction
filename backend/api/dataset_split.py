@@ -113,7 +113,7 @@ async def export_train_set(request: DatasetSplitRequest):
             if not dataset_info:
                 raise HTTPException(status_code=404, detail="数据集不存在")
             file_path = Path(dataset_info['file_path'])
-            original_filename = dataset_info['filename']
+            original_filename = dataset_info['original_filename']  # 使用原始文件名
         elif request.file_id:
             from config import UPLOAD_DIR
             file_path = None
@@ -170,7 +170,7 @@ async def export_test_set(request: DatasetSplitRequest):
             if not dataset_info:
                 raise HTTPException(status_code=404, detail="数据集不存在")
             file_path = Path(dataset_info['file_path'])
-            original_filename = dataset_info['filename']
+            original_filename = dataset_info['original_filename']  # 使用原始文件名
         elif request.file_id:
             from config import UPLOAD_DIR
             file_path = None

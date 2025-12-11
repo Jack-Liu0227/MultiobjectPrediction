@@ -3,7 +3,7 @@
 使用 SQLAlchemy ORM
 """
 
-from sqlalchemy import Column, String, Float, Integer, Text, DateTime, JSON, create_engine, TypeDecorator, Index
+from sqlalchemy import Column, String, Float, Integer, Text, DateTime, JSON, Boolean, ForeignKey, CheckConstraint, create_engine, TypeDecorator, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
@@ -81,6 +81,12 @@ class Task(Base):
     file_id = Column(String(36), nullable=False)
     filename = Column(String(255), nullable=False)
 
+    # 数据统计信息
+    total_rows = Column(Integer, nullable=True)  # 测试集样本数（任务完成后更新）
+    valid_rows = Column(Integer, nullable=True)  # 测试集有效样本数（任务完成后更新）
+    original_total_rows = Column(Integer, nullable=True)  # 已废弃：不再使用（应从数据集获取原始行数）
+    original_valid_rows = Column(Integer, nullable=True)  # 已废弃：不再使用（应从数据集获取原始行数）
+
     # 配置信息（使用 FlexibleJSON 处理旧数据）
     composition_column = Column(FlexibleJSON, nullable=True)  # 存储为 JSON 数组（支持多个元素列）
     processing_column = Column(FlexibleJSON, nullable=True)  # 存储为 JSON 数组（支持多个工艺列）
@@ -116,10 +122,24 @@ class Task(Base):
     # 预测过程详情（JSON 格式存储）
     process_details = Column(JSON, nullable=True)
 
+    # 迭代预测相关字段
+    enable_iteration = Column(Boolean, default=False, nullable=False)  # 是否启用迭代预测
+    max_iterations = Column(Integer, default=1, nullable=False)  # 最大迭代次数（1-10）
+    current_iteration = Column(Integer, default=0, nullable=False)  # 当前迭代轮数
+    convergence_threshold = Column(Float, default=0.01, nullable=False)  # 收敛阈值（0.001-0.1）
+    early_stop = Column(Boolean, default=True, nullable=False)  # 是否启用提前停止
+    max_workers = Column(Integer, default=5, nullable=False)  # 并行工作线程数（1-20）
+    iteration_history = Column(JSON, nullable=True)  # 迭代历史记录（JSON格式）
+    failed_samples = Column(JSON, nullable=True)  # 失败样本记录（JSON格式）
+    continue_from_task_id = Column(String(36), ForeignKey('tasks.task_id'), nullable=True)  # 继续自哪个任务
+
     # 复合索引：优化常见查询
     __table_args__ = (
         Index('idx_status_created_at', 'status', 'created_at'),  # 按状态和时间查询
         Index('idx_status_updated_at', 'status', 'updated_at'),  # 按状态和更新时间查询
+        CheckConstraint('max_iterations >= 1 AND max_iterations <= 10', name='check_max_iterations'),
+        CheckConstraint('convergence_threshold >= 0.001 AND convergence_threshold <= 0.1', name='check_convergence_threshold'),
+        CheckConstraint('max_workers >= 1 AND max_workers <= 20', name='check_max_workers'),
     )
 
 

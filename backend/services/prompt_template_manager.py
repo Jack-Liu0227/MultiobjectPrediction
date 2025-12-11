@@ -44,7 +44,7 @@ class PromptTemplateManager:
             "template_name": "默认统一模板",
             "template_type": "unified",
             "description": "基于 FEW-SHOT AUGMENTED CORRECTION PROTOCOL 的统一模板",
-            "system_role": "",
+            "system_role": "You are a materials science expert specializing in predicting multiple material properties simultaneously.",
             "task_description": "Predict {target_properties_list} for the target material using systematic analysis.",
             "input_format": "**Target Material**:\n{test_sample}",
             "output_format": dedent("""
@@ -169,15 +169,36 @@ class PromptTemplateManager:
         """
         获取默认的列名映射
 
-        注意：
-        - 返回空字典，因为列名映射应该由前端根据实际数据集动态生成
-        - 前端会根据用户选择的列名（如 "Processing_Description"）生成映射
-        - 这样可以支持任意的列名，而不是硬编码特定的列名
+        从 default_unified.json 文件中加载列名映射配置
+        如果文件不存在或没有映射配置，返回空字典
 
         Returns:
-            默认列名映射字典（空字典）
+            默认列名映射字典
         """
-        return {}
+        try:
+            from pathlib import Path
+            import json
+            from config import STORAGE_DIR
+
+            # 使用 config.py 中定义的 STORAGE_DIR
+            templates_dir = STORAGE_DIR / "prompt_templates"
+            default_template_path = templates_dir / "default_unified.json"
+
+            logger.info(f"Looking for default template at: {default_template_path}")
+
+            if default_template_path.exists():
+                with open(default_template_path, 'r', encoding='utf-8') as f:
+                    template_data = json.load(f)
+                    # 返回列名映射，如果不存在则返回空字典
+                    mapping = template_data.get("column_name_mapping", {})
+                    logger.info(f"Loaded default column mapping: {mapping}")
+                    return mapping
+            else:
+                logger.warning(f"Default template file not found at {default_template_path}, returning empty column mapping")
+                return {}
+        except Exception as e:
+            logger.error(f"Failed to load default column mapping: {e}", exc_info=True)
+            return {}
 
     def list_templates(self) -> List[Dict]:
         """

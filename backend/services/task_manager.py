@@ -10,6 +10,7 @@ from typing import Dict, Optional, Any, List
 from pathlib import Path
 import threading
 import logging
+import shutil
 
 from models.schemas import TaskStatus
 from database.task_db import TaskDatabase
@@ -45,7 +46,7 @@ class TaskManager:
         创建新任务
 
         Args:
-            request_data: 请求数据（包含 file_id, filename, config, note）
+            request_data: 请求数据（包含 file_id, filename, config, note, total_rows, valid_rows）
 
         Returns:
             task_id: 任务唯一标识符
@@ -61,6 +62,8 @@ class TaskManager:
             "filename": request_data.get("filename", ""),
             "config": request_data.get("config", {}),
             "note": request_data.get("note", ""),
+            "total_rows": request_data.get("total_rows"),
+            "valid_rows": request_data.get("valid_rows"),
         }
 
         # 保存到数据库
@@ -412,11 +415,41 @@ class TaskManager:
         Returns:
             任务配置字典
         """
+        # 先尝试从文件系统加载
         task_info = self._load_task(task_id)
-        if not task_info:
+        if task_info:
+            config = task_info.get("request_data", {}).get("config", {})
+            if config:
+                return config
+
+        # 如果文件系统中没有，尝试从数据库获取
+        from database.task_db import TaskDatabase
+        task_db = TaskDatabase()
+        db_task = task_db.get_task(task_id)
+
+        if not db_task:
             return None
 
-        return task_info.get("request_data", {}).get("config", {})
+        # 从数据库任务信息重建配置
+        config = {
+            "composition_column": db_task.get("composition_column"),
+            "processing_column": db_task.get("processing_column"),
+            "target_columns": db_task.get("target_columns", []),
+            "model_provider": db_task.get("model_provider"),
+            "model_name": db_task.get("model_name"),
+            "temperature": db_task.get("temperature"),
+            "sample_size": db_task.get("sample_size"),
+            "train_ratio": db_task.get("train_ratio"),
+            "max_retrieved_samples": db_task.get("max_retrieved_samples"),
+            "similarity_threshold": db_task.get("similarity_threshold"),
+            "random_seed": db_task.get("random_seed"),
+            "workers": db_task.get("workers"),
+        }
+
+        # 移除 None 值
+        config = {k: v for k, v in config.items() if v is not None}
+
+        return config
 
     def get_task_logs(self, task_id: str, limit: int = 100) -> list:
         """
@@ -447,6 +480,8 @@ class TaskManager:
         Returns:
             是否成功删除
         """
+        from config import RESULTS_DIR
+
         # 从数据库删除
         db_result = self.db.delete_task(task_id)
 
@@ -455,8 +490,23 @@ class TaskManager:
         if task_file.exists():
             try:
                 task_file.unlink()
+                logger.info(f"Deleted task file: {task_file}")
             except Exception as e:
                 logger.warning(f"Failed to delete task file {task_id}: {e}")
+
+        # 删除结果文件夹 - 使用 config.py 中的 RESULTS_DIR
+        results_dir = RESULTS_DIR / task_id
+
+        logger.info(f"Attempting to delete results directory: {results_dir}")
+
+        if results_dir.exists():
+            try:
+                shutil.rmtree(results_dir)
+                logger.info(f"Successfully deleted results directory for task {task_id}: {results_dir}")
+            except Exception as e:
+                logger.error(f"Failed to delete results directory for task {task_id} at {results_dir}: {e}", exc_info=True)
+        else:
+            logger.info(f"Results directory does not exist: {results_dir}")
 
         return db_result
 

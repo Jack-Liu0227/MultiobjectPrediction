@@ -426,6 +426,9 @@ class RAGPredictionService:
             # 6.2 保存任务配置信息到 task_config.json
             task_info = self.task_manager.get_task_status(task_id)
             if task_info:
+                # 获取完整任务信息（包含 total_rows 和 valid_rows）
+                full_task_info = self.task_manager.get_task(task_id)
+
                 task_config = {
                     "task_id": task_id,
                     "status": task_info.get("status"),
@@ -433,7 +436,10 @@ class RAGPredictionService:
                     "message": task_info.get("message", "预测完成"),
                     "created_at": task_info.get("created_at"),
                     "updated_at": task_info.get("updated_at"),
-                    "request_data": task_info.get("request_data", {})
+                    "request_data": task_info.get("request_data", {}),
+                    "total_rows": full_task_info.get("total_rows") if full_task_info else None,
+                    "valid_rows": full_task_info.get("valid_rows") if full_task_info else None,
+                    "note": full_task_info.get("note") if full_task_info else None
                 }
 
                 task_config_file = task_results_dir / "task_config.json"
@@ -1197,6 +1203,31 @@ class RAGPredictionService:
         # 3) 保存最终结果
         result_file = task_results_dir / "predictions.csv"
         save_df.to_csv(result_file, index=False)
+
+        # 3.1) 重新计算数据统计信息并更新数据库
+        try:
+            total_rows = int(len(save_df))
+            # 计算有效行数（所有预测列都非空且非0的行数）
+            pred_cols = [f"{col}_predicted" for col in config.target_columns]
+            valid_mask = pd.Series([True] * len(save_df))
+            for col in pred_cols:
+                if col in save_df.columns:
+                    valid_mask &= save_df[col].notna() & (save_df[col] != 0)
+            valid_rows = int(valid_mask.sum())
+
+            # 更新数据库中的数据统计
+            from database.task_db import TaskDatabase
+            task_db = TaskDatabase()
+            task_db.update_task(
+                task_id=str(task_results_dir.name),  # task_id 是目录名
+                updates={
+                    "total_rows": total_rows,
+                    "valid_rows": valid_rows
+                }
+            )
+            logger.info(f"Task {task_results_dir.name}: 更新数据统计 - 总行数: {total_rows}, 有效行数: {valid_rows}")
+        except Exception as e:
+            logger.warning(f"更新数据统计失败: {e}")
 
         # 4) 计算与保存指标（基于合并后的所有结果）
         # 使用 save_df 而不是 final_df，以便包含所有样本的指标

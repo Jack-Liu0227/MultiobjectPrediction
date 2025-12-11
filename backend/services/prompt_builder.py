@@ -44,10 +44,10 @@ class PromptBuilder:
     # 统一协议模板（支持单目标和多目标）
     UNIFIED_PROTOCOL = dedent("""
         ### FEW-SHOT AUGMENTED CORRECTION PROTOCOL
-                              
-        ### System Role 
+
+        ### System Role
         You are a materials science expert specializing in predicting multiple material properties simultaneously.
-                              
+
         **Task**: Predict {target_properties_list} for the target material using systematic analysis.
 
         **Reference Samples**:
@@ -83,6 +83,58 @@ class PromptBuilder:
           }},
           "confidence": "<high/medium/low>",
           "reasoning": "<your_analysis_summary>"
+        }}
+    """).strip()
+
+    # 迭代预测协议模板（用于第2轮及以后的迭代）
+    ITERATIVE_PROTOCOL = dedent("""
+        ### ITERATIVE PREDICTION REFINEMENT PROTOCOL
+
+        ### System Role
+        You are a materials science expert specializing in iterative refinement of material property predictions.
+
+        **Task**: This is iteration {iteration} of an iterative prediction process. Refine your predictions for {target_properties_list} based on previous iteration results.
+
+        **Previous Iteration History**:
+
+        {iteration_history}
+
+        **Reference Samples**:
+
+        Each sample shows values for all target properties.
+
+        {reference_samples}
+
+        **Target Material**:
+        {test_sample}
+
+        **Required Analysis Protocol**:
+
+        1. **Reference-Driven Baseline Establishment**:
+           - **Classification**: First, classify the general family of all materials involved (references and target).
+           - **Primary Baseline Selection**: From the provided `Reference Samples`, identify the single sample that is the **most analogous** to the `Target Material`. This sample and its `Known True Values` will serve as your **primary baseline**. Justify your choice.
+           - **Sanity Check (Optional but Recommended)**: Use your general knowledge of standard materials as a secondary check.
+           - **Previous Iteration Review**: Review the prediction history above, noting the trend and changes across iterations.
+
+        2. **Plausibility Assessment**:
+           - Assess the expected range for each target property based on your selected **primary baseline sample**.
+           - Consider the relationships between properties when applicable (e.g., strength-ductility trade-offs).
+           - **Convergence Check**: Identify which properties are converging and which need further adjustment.
+
+        3. **Interpolative Correction & Justification**:
+           - Formulate corrected values for each property.
+           - Your reasoning must be an **interpolation or extrapolation** from the primary baseline. Quantify how the **differences in characteristics** between the target and the baseline sample translate into specific property adjustments.
+           - Use fundamental materials principles to support *why* these differences lead to your calculated adjustments.
+           - **Iterative Refinement**: Make **small, justified adjustments** to previous predictions. Avoid large jumps unless strongly justified by reference data. If predictions are oscillating, dampen the adjustment magnitude.
+
+        Provide your systematic analysis and end with EXACTLY this JSON format:
+
+        {{
+          "predictions": {{
+            {predictions_json_template}
+          }},
+          "confidence": "<high/medium/low>",
+          "reasoning": "<your_refinement_analysis>"
         }}
     """).strip()
     
@@ -121,6 +173,89 @@ class PromptBuilder:
 
         return "\n".join(text_parts)
 
+    @staticmethod
+    def format_iteration_history(
+        sample_index: int,
+        target_property: str,
+        iterations_data: List[float]
+    ) -> str:
+        """
+        格式化单个样本单个目标属性的迭代历史为Markdown表格
+
+        Args:
+            sample_index: 样本索引
+            target_property: 目标属性名称
+            iterations_data: 迭代预测值列表，例如 [850, 855, 857]
+
+        Returns:
+            Markdown表格格式的迭代历史，例如：
+            | Iteration | UTS(MPa) |
+            |-----------|----------|
+            | 1         | 850      |
+            | 2         | 855      |
+            | 3         | 857      |
+        """
+        if not iterations_data:
+            return "No iteration history available."
+
+        # 构建表头
+        lines = [
+            f"| Iteration | {target_property} |",
+            "|-----------|----------|"
+        ]
+
+        # 添加每一轮的数据
+        for i, value in enumerate(iterations_data, start=1):
+            lines.append(f"| {i}         | {value:.2f}      |")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_multi_target_iteration_history(
+        sample_index: int,
+        target_properties: List[str],
+        iterations_data: Dict[str, List[float]]
+    ) -> str:
+        """
+        格式化单个样本多个目标属性的迭代历史为Markdown表格
+
+        Args:
+            sample_index: 样本索引
+            target_properties: 目标属性名称列表
+            iterations_data: 迭代预测值字典，例如 {"UTS(MPa)": [850, 855], "El(%)": [12.5, 12.8]}
+
+        Returns:
+            Markdown表格格式的迭代历史，例如：
+            | Iteration | UTS(MPa) | El(%) |
+            |-----------|----------|-------|
+            | 1         | 850      | 12.5  |
+            | 2         | 855      | 12.8  |
+        """
+        if not iterations_data or not target_properties:
+            return "No iteration history available."
+
+        # 确定迭代次数（取第一个属性的长度）
+        num_iterations = len(iterations_data.get(target_properties[0], []))
+        if num_iterations == 0:
+            return "No iteration history available."
+
+        # 构建表头
+        header_cols = ["Iteration"] + target_properties
+        header = "| " + " | ".join(header_cols) + " |"
+        separator = "|" + "|".join(["-" * (len(col) + 2) for col in header_cols]) + "|"
+
+        lines = [header, separator]
+
+        # 添加每一轮的数据
+        for i in range(num_iterations):
+            row_data = [str(i + 1)]
+            for prop in target_properties:
+                value = iterations_data.get(prop, [])[i] if i < len(iterations_data.get(prop, [])) else 0.0
+                row_data.append(f"{value:.2f}")
+            lines.append("| " + " | ".join(row_data) + " |")
+
+        return "\n".join(lines)
+
     def get_property_unit(self, target_property: str) -> str:
         """获取属性单位"""
         # 精确匹配
@@ -155,7 +290,7 @@ class PromptBuilder:
         应用列名映射到文本中 - 这是整个项目的核心功能之一
 
         重要性说明：
-        列名映射将技术性的数据库列名（如 "Processing", "Temperature"）转换为
+        列名映射将技术性的数据库列名（如 "Processing_Description", "Temperature"）转换为
         LLM 更容易理解的描述性名称（如 "Heat treatment method", "Test Temperature (K)"）。
         这对提高 LLM 预测准确性至关重要，因为：
         1. LLM 能更好地理解数据的物理含义
@@ -169,7 +304,7 @@ class PromptBuilder:
         4. 前端预览和实际预测都使用相同的映射逻辑
 
         Args:
-            text: 原始文本，例如 "Composition: ...\nProcessing: ..."
+            text: 原始文本，例如 "Composition: ...\nProcessing_Description: ..."
 
         Returns:
             映射后的文本，例如 "Composition: ...\nHeat treatment method: ..."
@@ -206,15 +341,19 @@ class PromptBuilder:
         self,
         retrieved_samples: List[Tuple[str, float, Dict[str, Any]]],
         test_sample: str,
-        target_properties: List[str]
+        target_properties: List[str],
+        iteration: int = 1,
+        iteration_history: Optional[str] = None
     ) -> str:
         """
-        构建 RAG 提示词（统一支持单目标和多目标）
+        构建 RAG 提示词（统一支持单目标和多目标，支持迭代预测）
 
         Args:
             retrieved_samples: 检索到的相似样本列表 [(sample_text, similarity, metadata), ...]
             test_sample: 测试样本文本
             target_properties: 目标属性列表（单目标时长度为1，多目标时长度>1）
+            iteration: 当前迭代轮数（默认1）
+            iteration_history: 迭代历史（Markdown表格格式，可选）
 
         Returns:
             完整的提示词
@@ -227,7 +366,6 @@ class PromptBuilder:
                 target_properties
             )
 
-        # 否则使用统一的默认模板
         # 零样本情况
         if not retrieved_samples:
             return self._build_zero_shot_prompt(test_sample, target_properties)
@@ -243,12 +381,25 @@ class PromptBuilder:
         target_properties_list = ", ".join(target_properties)
         predictions_json_template = self._build_predictions_json_template(target_properties)
 
-        return self.UNIFIED_PROTOCOL.format(
-            target_properties_list=target_properties_list,
-            reference_samples=reference_samples,
-            test_sample=mapped_test_sample,
-            predictions_json_template=predictions_json_template
-        )
+        # 判断使用哪个模板
+        if iteration > 1 and iteration_history:
+            # 迭代预测第2轮及以后：使用ITERATIVE_PROTOCOL
+            return self.ITERATIVE_PROTOCOL.format(
+                iteration=iteration,
+                iteration_history=iteration_history,
+                target_properties_list=target_properties_list,
+                reference_samples=reference_samples,
+                test_sample=mapped_test_sample,
+                predictions_json_template=predictions_json_template
+            )
+        else:
+            # 单次预测或迭代预测第1轮：使用UNIFIED_PROTOCOL
+            return self.UNIFIED_PROTOCOL.format(
+                target_properties_list=target_properties_list,
+                reference_samples=reference_samples,
+                test_sample=mapped_test_sample,
+                predictions_json_template=predictions_json_template
+            )
 
     def _build_prompt_with_custom_template(
         self,
