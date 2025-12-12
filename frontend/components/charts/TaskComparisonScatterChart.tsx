@@ -24,22 +24,36 @@ interface TaskComparisonScatterChartProps {
       actual_value: number;
       predictions: { [key: string]: number };
       consistency_level: number;
+      confidence?: string;
     }>;
     task_ids: string[];
     n_tasks: number;
     target_column: string;
   };
+  confidenceFilter?: 'all' | 'high' | 'medium' | 'low';
 }
 
 export default function TaskComparisonScatterChart({
   comparisonData,
+  confidenceFilter = 'all',
 }: TaskComparisonScatterChartProps) {
   const { sample_details, task_ids, n_tasks, target_column } = comparisonData;
+
+  // Filter samples by confidence
+  const filteredSamples = React.useMemo(() => {
+    if (confidenceFilter === 'all') {
+      return sample_details;
+    }
+    return sample_details.filter(sample => {
+      const confidence = sample.confidence?.toLowerCase();
+      return confidence === confidenceFilter;
+    });
+  }, [sample_details, confidenceFilter]);
 
   // Prepare scatter plot data grouped by task
   // sample.predictions is an object with task_id as keys and predicted values as values
   const scatterDataByTask = task_ids.map((taskId, taskIndex) => {
-    const taskData = sample_details.map((sample) => ({
+    const taskData = filteredSamples.map((sample) => ({
       actual: sample.actual_value,
       predicted: sample.predictions[taskId],
       consistency: sample.consistency_level,
@@ -73,12 +87,14 @@ export default function TaskComparisonScatterChart({
     return { mae, rmse, r2 };
   };
 
-  // Calculate metrics for each task
-  const taskMetrics = scatterDataByTask.map(task => ({
-    taskId: task.taskId,
-    taskIndex: task.taskIndex,
-    ...calculateTaskMetrics(task.data),
-  }));
+  // Calculate metrics for each task (recalculated when filtered data changes)
+  const taskMetrics = React.useMemo(() => {
+    return scatterDataByTask.map(task => ({
+      taskId: task.taskId,
+      taskIndex: task.taskIndex,
+      ...calculateTaskMetrics(task.data),
+    }));
+  }, [scatterDataByTask]);
 
   // Calculate data range for reference line
   const allValues = scatterData.flatMap(d => [d.actual, d.predicted]);

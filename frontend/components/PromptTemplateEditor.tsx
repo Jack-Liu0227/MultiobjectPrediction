@@ -34,7 +34,7 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
     template_name: '',
     template_type: 'unified',
     description: '',
-    system_role: '',
+    system_role: 'You are a materials science expert specializing in predicting multiple material properties simultaneously.',
     task_description: 'Predict {target_properties_list} for the target material using systematic analysis.',
     input_format: '**Target Material**:\n{test_sample}',
     output_format: `Provide your systematic analysis and end with EXACTLY this JSON format:
@@ -64,7 +64,7 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
    - Use fundamental materials principles to support *why* these differences lead to your calculated adjustments.`,
     predictions_json_template: '',
     column_name_mapping: {
-      'Processing': 'Heat treatment method',
+      'Processing_Description': 'Heat treatment method',
       'Composition': 'Composition'
     },
     apply_mapping_to_target: true,
@@ -82,6 +82,10 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
 
   // 新增：特征列选择状态
   const [selectedFeatureColumns, setSelectedFeatureColumns] = useState<string[]>([]);
+
+  // 新增：迭代预测预览相关状态
+  const [previewIteration, setPreviewIteration] = useState<number>(1); // 预览的迭代轮次
+  const [previewIterationHistory, setPreviewIterationHistory] = useState<Record<string, number[]>>({}); // 预览的迭代历史
 
   // 新增：列选择状态追踪（用于列名映射自动提取）
   const [compositionColumns, setCompositionColumns] = useState<string[]>([]);
@@ -260,7 +264,7 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
         template_name: '',
         template_type: 'unified',
         description: '',
-        system_role: '',
+        system_role: 'You are a materials science expert specializing in predicting multiple material properties simultaneously.',
         task_description: 'Predict {target_properties_list} for the target material using systematic analysis.',
         input_format: '**Target Material**:\n{test_sample}',
         output_format: `Provide your systematic analysis and end with EXACTLY this JSON format:
@@ -289,7 +293,7 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
    - Your reasoning must be an **interpolation or extrapolation** from the primary baseline. Quantify how the **differences in characteristics** between the target and the baseline sample translate into specific property adjustments.
    - Use fundamental materials principles to support *why* these differences lead to your calculated adjustments.`,
         column_name_mapping: {
-          'Processing': 'Heat treatment method',
+          'Processing_Description': 'Heat treatment method',
           'Composition': 'Composition'
         },
         apply_mapping_to_target: true,
@@ -309,7 +313,7 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
         setCurrentTemplate({
           ...data,
           column_name_mapping: data.column_name_mapping || {
-            'Processing': 'Heat treatment method',
+            'Processing_Description': 'Heat treatment method',
             'Composition': 'Composition'
           },
           apply_mapping_to_target: data.apply_mapping_to_target ?? true,
@@ -425,7 +429,7 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
       template_name: '',
       template_type: 'unified',
       description: '',
-      system_role: '',
+      system_role: 'You are a materials science expert specializing in predicting multiple material properties simultaneously.',
       task_description: 'Predict {target_properties_list} for the target material using systematic analysis.',
       input_format: '**Target Material**:\n{test_sample}',
       output_format: `Provide your systematic analysis and end with EXACTLY this JSON format:
@@ -455,7 +459,7 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
    - Use fundamental materials principles to support *why* these differences lead to your calculated adjustments.`,
       predictions_json_template: '',
       column_name_mapping: {
-        'Processing': 'Heat treatment method',
+        'Processing_Description': 'Heat treatment method',
         'Composition': 'Composition'
       },
       apply_mapping_to_target: true,
@@ -597,7 +601,10 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({ onTemplateS
         composition_column: compositionColumn,
         processing_column: localProcessingColumn.length > 0 ? localProcessingColumn : undefined,
         target_columns: localTargetColumns,
-        feature_columns: featureColumns
+        feature_columns: featureColumns,
+        // 迭代预测相关字段
+        iteration: previewIteration,
+        iteration_history: previewIteration > 1 ? previewIterationHistory : undefined
       };
 
       console.log('预览请求数据:', JSON.stringify(requestBody, null, 2));
@@ -1035,7 +1042,7 @@ ${formatValue(currentTemplate.analysis_protocol)}
                     setCurrentTemplate({
                       ...currentTemplate,
                       column_name_mapping: {
-                        'Processing': 'Heat treatment method',
+                        'Processing_Description': 'Heat treatment method',
                         'Composition': 'Composition'
                       }
                     });
@@ -1053,7 +1060,7 @@ ${formatValue(currentTemplate.analysis_protocol)}
                 ⚠️ 重要：列名映射会影响 LLM 对数据的理解
               </p>
               <p className="text-xs text-blue-700">
-                将技术性列名（如 "Processing"）映射为描述性名称（如 "Heat treatment method"）可以显著提高 LLM 的预测准确性。
+                将技术性列名（如 "Processing_Description"）映射为描述性名称（如 "Heat treatment method"）可以显著提高 LLM 的预测准确性。
                 映射后的名称会在预览和实际预测的提示词中使用。
               </p>
             </div>
@@ -1288,7 +1295,7 @@ ${formatValue(currentTemplate.analysis_protocol)}
               <p className="text-xs font-medium text-gray-700 mb-2">💡 列名映射示例：</p>
               <ul className="text-xs text-gray-600 space-y-1 ml-4">
                 <li>• "Temperature" → "测试温度" 或 "Test Temperature (K)"</li>
-                <li>• "Processing" → "热处理工艺" 或 "Heat treatment method"</li>
+                <li>• "Processing_Description" → "热处理工艺" 或 "Heat treatment method"</li>
                 <li>• "Pressure" → "压力 (MPa)" 或 "Applied Pressure"</li>
                 <li>• "Aging_Time" → "时效时间 (h)" 或 "Aging Duration"</li>
               </ul>
@@ -1502,6 +1509,59 @@ ${formatValue(currentTemplate.analysis_protocol)}
                 )}
               </div>
             )}
+          </div>
+
+          {/* 迭代预测预览设置 */}
+          <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+            <h4 className="text-sm font-semibold text-gray-900 mb-3">🔄 迭代预测预览设置</h4>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  预览迭代轮次
+                </label>
+                <select
+                  value={previewIteration}
+                  onChange={(e) => {
+                    const iteration = parseInt(e.target.value);
+                    setPreviewIteration(iteration);
+                    // 如果切换到第1轮，清空迭代历史
+                    if (iteration === 1) {
+                      setPreviewIterationHistory({});
+                    }
+                  }}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value={1}>第 1 轮（初始预测）</option>
+                  <option value={2}>第 2 轮（迭代预测）</option>
+                  <option value={3}>第 3 轮（迭代预测）</option>
+                </select>
+              </div>
+
+              {previewIteration > 1 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    迭代历史数据（JSON格式）
+                  </label>
+                  <textarea
+                    value={JSON.stringify(previewIterationHistory, null, 2)}
+                    onChange={(e) => {
+                      try {
+                        const history = JSON.parse(e.target.value);
+                        setPreviewIterationHistory(history);
+                      } catch (err) {
+                        // 忽略解析错误，等待用户输入完整的JSON
+                      }
+                    }}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 font-mono text-xs"
+                    rows={6}
+                    placeholder={`示例格式：\n{\n  "UTS(MPa)": [800.5],\n  "El(%)": [10.2]\n}`}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    💡 提示：数组长度应为 {previewIteration - 1}（前 {previewIteration - 1} 轮的预测值）
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="flex justify-end gap-3">

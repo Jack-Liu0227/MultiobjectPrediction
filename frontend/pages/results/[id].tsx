@@ -8,6 +8,7 @@ import { useRouter } from 'next/router';
 import dynamic from 'next/dynamic';
 import { getResults, getParetoAnalysis, triggerDownload, getTaskStatus, getTaskList } from '@/lib/api';
 import PredictionTraceModal from '@/components/PredictionTraceModal';
+import IterativePredictionTraceModal from '@/components/IterativePredictionTraceModal';
 import { taskEvents } from '@/lib/taskEvents';
 import ExportButton, { ExportOption } from '@/components/ExportButton';
 import {
@@ -255,8 +256,10 @@ export default function ResultsPage() {
             row[key] = value;
           });
         }
-        if (detail.predicted_values) {
-          Object.entries(detail.predicted_values).forEach(([key, value]) => {
+        // 兼容新旧格式：优先使用 final_predictions，如果不存在则使用 predicted_values
+        const predictedValues = detail.final_predictions || detail.predicted_values;
+        if (predictedValues) {
+          Object.entries(predictedValues).forEach(([key, value]) => {
             row[`${key}_predicted`] = value;
           });
         }
@@ -561,18 +564,29 @@ export default function ResultsPage() {
   }
 
   if (error) {
+    // 确保 error 是字符串类型
+    const errorMessage = typeof error === 'string' ? error : (error as any)?.message || '未知错误';
+
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="bg-white rounded-lg shadow p-8 max-w-md">
           <div className="text-red-600 text-6xl mb-4">❌</div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">加载失败</h2>
-          <p className="text-gray-600 mb-4">{error}</p>
-          <button
-            onClick={() => router.push('/prediction')}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            返回预测页面
-          </button>
+          <p className="text-gray-600 mb-4">{errorMessage}</p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => router.push('/prediction')}
+              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              返回预测页面
+            </button>
+            <button
+              onClick={() => router.push('/tasks')}
+              className="flex-1 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+            >
+              查看任务列表
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -766,6 +780,17 @@ export default function ResultsPage() {
                     <span className="text-gray-500">文件名:</span>
                     <span className="ml-1 font-medium truncate block" title={taskConfig.request_data?.filename}>{taskConfig.request_data?.filename || '-'}</span>
                   </div>
+                  {/* 数据统计 */}
+                  {(taskConfig.total_rows !== undefined || taskConfig.valid_rows !== undefined) && (
+                    <div className="text-xs">
+                      <span className="text-gray-500">数据统计:</span>
+                      <div className="ml-1 font-medium mt-1 flex items-center gap-2">
+                        <span className="text-blue-600">总行数: {taskConfig.total_rows ?? '-'}</span>
+                        <span className="text-gray-400">|</span>
+                        <span className="text-green-600">有效行数: {taskConfig.valid_rows ?? '-'}</span>
+                      </div>
+                    </div>
+                  )}
                   {taskConfig.note && (
                     <div className="text-xs">
                       <span className="text-gray-500">备注:</span>
@@ -963,30 +988,30 @@ export default function ResultsPage() {
                     </p>
                   </div>
                 </div>
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto" style={{ maxHeight: 'calc(100vh - 450px)', overflowY: 'auto' }}>
                   <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
+                    <thead className="bg-gray-50 sticky top-0 z-20">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase sticky left-0 bg-gray-50 z-10">
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase sticky left-0 bg-gray-50 z-30">
                           ID
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase bg-gray-50">
                           #
                         </th>
                         {targetColumns.map((col) => (
                           <React.Fragment key={col}>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase bg-gray-50">
                               {col} (真实)
                             </th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase bg-gray-50">
                               {col} (预测)
                             </th>
                           </React.Fragment>
                         ))}
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase bg-gray-50">
                           生成时间
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase bg-gray-50">
                           操作
                         </th>
                       </tr>
@@ -1766,15 +1791,27 @@ export default function ResultsPage() {
         </div>
       </main>
 
-      {/* 溯源模态框 */}
+      {/* 溯源模态框 - 根据任务配置选择使用迭代预测模态框或普通模态框 */}
       {showTraceModal && selectedPoint && results.task_id && (
-        <PredictionTraceModal
-          isOpen={showTraceModal}
-          onClose={() => setShowTraceModal(false)}
-          taskId={results.task_id}
-          sampleIndex={selectedPoint.index}
-          sampleData={selectedPoint}
-        />
+        <>
+          {taskConfig?.config?.enable_iteration || taskConfig?.config?.max_iterations > 1 ? (
+            <IterativePredictionTraceModal
+              isOpen={showTraceModal}
+              onClose={() => setShowTraceModal(false)}
+              taskId={results.task_id}
+              sampleIndex={selectedPoint.index}
+              sampleData={selectedPoint}
+            />
+          ) : (
+            <PredictionTraceModal
+              isOpen={showTraceModal}
+              onClose={() => setShowTraceModal(false)}
+              taskId={results.task_id}
+              sampleIndex={selectedPoint.index}
+              sampleData={selectedPoint}
+            />
+          )}
+        </>
       )}
     </div>
   );

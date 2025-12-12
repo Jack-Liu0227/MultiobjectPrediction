@@ -15,7 +15,7 @@ import { UploadResponse } from '@/lib/types';
 import { startPrediction, getTaskStatus } from '@/lib/api';
 
 // 配置标签页类型
-type ConfigTab = 'elements' | 'processing' | 'targets' | 'features' | 'rag' | 'llm' | 'split' | 'template';
+type ConfigTab = 'elements' | 'processing' | 'targets' | 'features' | 'rag' | 'llm' | 'split' | 'template' | 'iteration';
 
 // 预测配置接口
 interface PredictionSettings {
@@ -39,6 +39,12 @@ interface PredictionSettings {
   sampleSize: number; // 从测试集随机抽取的样本数
   workers: number; // 并行预测的工作线程数
   promptTemplate: any | null; // 自定义提示词模板
+  // 迭代预测配置
+  enableIteration: boolean;
+  maxIterations: number;
+  convergenceThreshold: number;
+  earlyStop: boolean;
+  maxWorkers: number;
 }
 
 export default function PredictionPage() {
@@ -74,6 +80,12 @@ export default function PredictionPage() {
     sampleSize: 10, // 默认从测试集抽取 10 个样本
     workers: 5, // 默认并行线程数
     promptTemplate: null, // 默认不使用自定义模板
+    // 迭代预测配置
+    enableIteration: false,
+    maxIterations: 5,
+    convergenceThreshold: 0.01,
+    earlyStop: true,
+    maxWorkers: 5,
   });
 
   // 任务状态
@@ -84,6 +96,7 @@ export default function PredictionPage() {
 
   // 数据集划分信息
   const [trainSampleCount, setTrainSampleCount] = useState<number>(0);
+  const [retrievalRatioInput, setRetrievalRatioInput] = useState<string>(''); // 检索比例输入框的临时值
 
   // 侧边栏状态
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -206,6 +219,12 @@ export default function PredictionPage() {
         sampleSize: config.sample_size || 10,
         workers: config.workers || 5,
         promptTemplate: config.prompt_template || null,
+        // 迭代预测配置
+        enableIteration: config.enable_iteration || false,
+        maxIterations: config.max_iterations || 5,
+        convergenceThreshold: config.convergence_threshold || 0.01,
+        earlyStop: config.early_stop !== undefined ? config.early_stop : true,
+        maxWorkers: config.max_workers || 5,
       });
 
       setTaskNote(requestData.task_note || '');
@@ -350,7 +369,10 @@ export default function PredictionPage() {
       setError(null);
       setIsRunning(true);
 
-      const response = await startPrediction({
+      // 根据是否启用迭代预测选择不同的API端点
+      const apiEndpoint = settings.enableIteration ? '/api/iterative-prediction/start' : '/api/prediction/start';
+
+      const requestBody = {
         file_id: selectedDatasetId ? undefined : uploadedFile.file_id,
         dataset_id: selectedDatasetId || undefined,
         filename: uploadedFile.filename,
@@ -371,11 +393,32 @@ export default function PredictionPage() {
           workers: settings.workers, // 并行工作线程数
           prompt_template: settings.promptTemplate, // 自定义提示词模板
           continue_from_task_id: continueFromTaskId, // 增量预测：继续未完成的任务
+          // 迭代预测配置
+          ...(settings.enableIteration && {
+            enable_iteration: true,
+            max_iterations: settings.maxIterations,
+            convergence_threshold: settings.convergenceThreshold,
+            early_stop: settings.earlyStop,
+            max_workers: settings.maxWorkers,
+          }),
         },
+      };
+
+      const response = await fetch(`http://localhost:8000${apiEndpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
       });
 
-      setTaskId(response.task_id);
-      pollTaskStatus(response.task_id);
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || '启动预测失败');
+      }
+
+      const data = await response.json();
+
+      setTaskId(data.task_id);
+      pollTaskStatus(data.task_id);
     } catch (err: any) {
       setError(err.message || '启动预测失败');
       setIsRunning(false);
@@ -449,6 +492,7 @@ export default function PredictionPage() {
     { id: 'split' as ConfigTab, label: '✂️ 数据集划分', icon: '✂️' },
     { id: 'rag' as ConfigTab, label: '🔍 RAG配置', icon: '🔍' },
     { id: 'llm' as ConfigTab, label: '🤖 LLM配置', icon: '🤖' },
+    { id: 'iteration' as ConfigTab, label: '🔄 迭代预测', icon: '🔄' },
     { id: 'template' as ConfigTab, label: '📝 提示词模板', icon: '📝' },
   ];
 
@@ -531,6 +575,11 @@ export default function PredictionPage() {
                     sampleSize: 10,
                     workers: 5,
                     promptTemplate: null,
+                    enableIteration: false,
+                    maxIterations: 5,
+                    convergenceThreshold: 0.01,
+                    earlyStop: true,
+                    maxWorkers: 5,
                   });
                   setActiveTab('elements');
                   // 清空 localStorage 中可能存在的配置
@@ -1052,32 +1101,83 @@ export default function PredictionPage() {
 
                 <span className="text-gray-400">或</span>
 
-                {/* 比例输入 */}
+                {/* 比例输入 - 双向同步 */}
                 <div className="flex items-center space-x-2">
                   <input
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.01}
+                    type="text"
+                    value={
+                      retrievalRatioInput !== ''
+                        ? retrievalRatioInput
+                        : (() => {
+                            const datasetRowCount = uploadedFile?.row_count || 0;
+                            const trainRatio = settings.trainRatio;
+                            const trainCount = Math.floor(datasetRowCount * trainRatio);
+                            return trainCount > 0
+                              ? ((settings.maxRetrievedSamples || 0) / trainCount).toFixed(3)
+                              : '';
+                          })()
+                    }
                     onChange={(e) => {
                       const value = e.target.value;
+                      setRetrievalRatioInput(value);
+                    }}
+                    onFocus={(e) => {
+                      // 获取焦点时，选中所有文本
+                      e.target.select();
+                      // 如果当前显示的是计算值，设置为输入状态
+                      if (retrievalRatioInput === '') {
+                        const datasetRowCount = uploadedFile?.row_count || 0;
+                        const trainRatio = settings.trainRatio;
+                        const trainCount = Math.floor(datasetRowCount * trainRatio);
+                        if (trainCount > 0) {
+                          const currentRatio = ((settings.maxRetrievedSamples || 0) / trainCount).toFixed(3);
+                          setRetrievalRatioInput(currentRatio);
+                        }
+                      }
+                    }}
+                    onBlur={() => {
+                      // 失去焦点时，计算并更新样本数
+                      const value = retrievalRatioInput;
                       if (value === '') {
-                        return;
+                        return; // 如果为空，不做任何操作
                       }
                       const ratio = parseFloat(value);
-                      if (!isNaN(ratio) && ratio >= 0 && ratio <= 1 && trainSampleCount > 0) {
-                        const calculated = Math.round(ratio * trainSampleCount);
-                        setSettings(prev => ({ ...prev, maxRetrievedSamples: calculated >= 1 ? calculated : 1 }));
+                      const datasetRowCount = uploadedFile?.row_count || 0;
+                      const trainRatio = settings.trainRatio;
+                      const trainCount = Math.floor(datasetRowCount * trainRatio);
+                      if (!isNaN(ratio) && ratio >= 0 && trainCount > 0) {
+                        // 允许超过 1 的比例
+                        const calculated = Math.round(ratio * trainCount);
+                        setSettings(prev => ({ ...prev, maxRetrievedSamples: calculated >= 0 ? calculated : 0 }));
+                      }
+                      // 清空输入框，恢复显示计算值
+                      setRetrievalRatioInput('');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.currentTarget.blur(); // 触发 onBlur 事件
                       }
                     }}
                     className="w-32 border border-gray-300 rounded-lg px-3 py-2"
-                    placeholder="0.8"
+                    placeholder="0.000"
+                    disabled={(() => {
+                      const datasetRowCount = uploadedFile?.row_count || 0;
+                      const trainRatio = settings.trainRatio;
+                      const trainCount = Math.floor(datasetRowCount * trainRatio);
+                      return trainCount === 0;
+                    })()}
+                    title={(() => {
+                      const datasetRowCount = uploadedFile?.row_count || 0;
+                      const trainRatio = settings.trainRatio;
+                      const trainCount = Math.floor(datasetRowCount * trainRatio);
+                      return trainCount === 0 ? "请先上传数据集" : "";
+                    })()}
                   />
                   <span className="text-sm text-gray-600">比例 (0-1)</span>
                 </div>
               </div>
               <p className="text-xs text-gray-500 mt-2">
-                💡 可直接输入数量（如50）或比例（如0.8表示80%）。样本数越多，预测越准确但速度越慢。
+                💡 可直接输入数量（如50）或比例（如0.8表示80%）。两个输入框自动同步，修改任一字段即可。
               </p>
               {settings.maxRetrievedSamples === 0 && (
                 <div className="mt-2 text-sm text-purple-600 bg-purple-50 border border-purple-200 rounded p-2">
@@ -1278,6 +1378,139 @@ export default function PredictionPage() {
               onRandomSeedChange={(seed) => setSettings(prev => ({ ...prev, randomSeed: seed }))}
               onTrainCountChange={(count) => setTrainSampleCount(count)}
             />
+          </div>
+        );
+
+      case 'iteration':
+        return (
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">迭代预测配置</h3>
+              <p className="text-sm text-gray-500 mb-4">
+                启用迭代预测功能，通过多轮预测逐步优化结果直至收敛
+              </p>
+            </div>
+
+            {/* 启用迭代预测开关 */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.enableIteration}
+                  onChange={(e) => setSettings(prev => ({ ...prev, enableIteration: e.target.checked }))}
+                  className="w-5 h-5 text-blue-600 rounded"
+                />
+                <div>
+                  <span className="text-sm font-medium text-gray-900">启用迭代预测</span>
+                  <p className="text-xs text-gray-600 mt-1">
+                    开启后，系统将进行多轮预测，每轮使用上一轮的结果作为参考，直至收敛或达到最大迭代次数
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            {settings.enableIteration && (
+              <>
+                {/* 最大迭代次数 */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    最大迭代次数
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={settings.maxIterations}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value);
+                      if (!isNaN(value) && value >= 1 && value <= 10) {
+                        setSettings(prev => ({ ...prev, maxIterations: value }));
+                      }
+                    }}
+                    className="w-32 border border-gray-300 rounded-lg px-3 py-2"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    范围: 1-10，推荐值: 5。迭代次数越多，预测越精确但耗时越长
+                  </p>
+                </div>
+
+                {/* 收敛阈值 */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    收敛阈值
+                  </label>
+                  <input
+                    type="number"
+                    min={0.001}
+                    max={0.1}
+                    step={0.001}
+                    value={settings.convergenceThreshold}
+                    onChange={(e) => {
+                      const value = parseFloat(e.target.value);
+                      if (!isNaN(value) && value >= 0.001 && value <= 0.1) {
+                        setSettings(prev => ({ ...prev, convergenceThreshold: value }));
+                      }
+                    }}
+                    className="w-32 border border-gray-300 rounded-lg px-3 py-2"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    范围: 0.001-0.1，推荐值: 0.01。当相邻两轮预测值的相对变化率小于此阈值时，认为已收敛
+                  </p>
+                </div>
+
+                {/* 提前停止 */}
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.earlyStop}
+                      onChange={(e) => setSettings(prev => ({ ...prev, earlyStop: e.target.checked }))}
+                      className="w-5 h-5 text-blue-600 rounded"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-gray-900">启用提前停止</span>
+                      <p className="text-xs text-gray-600 mt-1">
+                        当收敛样本数达到80%时自动停止迭代，节省时间和成本
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {/* 并行工作线程数 */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    并行工作线程数
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={settings.maxWorkers}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value);
+                      if (!isNaN(value) && value >= 1 && value <= 20) {
+                        setSettings(prev => ({ ...prev, maxWorkers: value }));
+                      }
+                    }}
+                    className="w-32 border border-gray-300 rounded-lg px-3 py-2"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    范围: 1-20，推荐值: 5。增加线程数可加快预测速度，但会增加API并发请求数
+                  </p>
+                </div>
+
+                {/* 预估信息 */}
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                  <h4 className="text-sm font-medium text-amber-900 mb-2">⚠️ 预估信息</h4>
+                  <div className="text-xs text-amber-800 space-y-1">
+                    <p>• 测试样本数: {(uploadedFile?.row_count || 0) - Math.floor((uploadedFile?.row_count || 0) * settings.trainRatio)} 个</p>
+                    <p>• 最大迭代次数: {settings.maxIterations} 轮</p>
+                    <p>• 预估最大API调用次数: {((uploadedFile?.row_count || 0) - Math.floor((uploadedFile?.row_count || 0) * settings.trainRatio)) * settings.maxIterations} 次</p>
+                    <p>• 预估耗时: {Math.ceil(((uploadedFile?.row_count || 0) - Math.floor((uploadedFile?.row_count || 0) * settings.trainRatio)) * settings.maxIterations / settings.maxWorkers)} 秒（假设每次调用1秒）</p>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         );
 

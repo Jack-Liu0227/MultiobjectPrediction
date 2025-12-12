@@ -125,11 +125,11 @@ def check_services():
     for service in services:
         service_path = backend_dir / service
         if service_path.exists():
-            print(f"✓ {service:40s} - 存在")
+            print(f"[OK] {service:40s} - 存在")
         else:
-            print(f"✗ {service:40s} - 缺失")
+            print(f"[FAIL] {service:40s} - 缺失")
             all_ok = False
-    
+
     return all_ok
 
 def test_rag_model_loading():

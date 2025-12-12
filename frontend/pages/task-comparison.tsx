@@ -177,7 +177,13 @@ export default function TaskComparisonPage() {
 
   const loadTasks = async () => {
     try {
-      const response = await getTaskList({ status: 'completed' });
+      // 获取所有已完成的任务(设置较大的 page_size)
+      const response = await getTaskList({
+        status: 'completed',
+        page_size: 50,  // 获取最近50个已完成的任务
+        sort_by: 'created_at',
+        sort_order: 'desc'
+      });
       const completedTasks = response.tasks.filter((t: Task) => t.status === 'completed');
       setTasks(completedTasks);
 
@@ -253,6 +259,49 @@ export default function TaskComparisonPage() {
       return { name: task.note, icon: '💬' };
     }
     return { name: task.filename || taskId.substring(0, 8), icon: '📄' };
+  };
+
+  // Recalculate consistency distribution based on filtered samples
+  const recalculateConsistencyDistribution = (
+    sampleDetails: any[],
+    nTasks: number
+  ): { [key: string]: { count: number; percentage: number; level: number } } => {
+    if (!sampleDetails || sampleDetails.length === 0) {
+      return {};
+    }
+
+    // Count consistency levels
+    const levelCounts: { [level: number]: number } = {};
+    sampleDetails.forEach(sample => {
+      const level = sample.consistency_level;
+      levelCounts[level] = (levelCounts[level] || 0) + 1;
+    });
+
+    // Build distribution object
+    const distribution: { [key: string]: { count: number; percentage: number; level: number } } = {};
+    const totalSamples = sampleDetails.length;
+
+    for (let level = nTasks; level >= 1; level--) {
+      const count = levelCounts[level] || 0;
+      const percentage = totalSamples > 0 ? (count / totalSamples) * 100 : 0;
+
+      let label: string;
+      if (level === nTasks) {
+        label = `全部${nTasks}个任务一致`;
+      } else if (level === 1) {
+        label = `全部${nTasks}个任务都不同`;
+      } else {
+        label = `恰好${level}个任务一致`;
+      }
+
+      distribution[label] = {
+        count,
+        percentage,
+        level,
+      };
+    }
+
+    return distribution;
   };
 
   // Handle task selection
@@ -1300,7 +1349,11 @@ export default function TaskComparisonPage() {
                               label: '导出数据 (CSV)',
                               format: 'csv',
                               onClick: () => {
-                                const distData = Object.entries(result.consistency_distribution).map(([label, data]: [string, any]) => ({
+                                const filteredDistribution = recalculateConsistencyDistribution(
+                                  filterByConfidence(result.sample_details || []),
+                                  result.n_tasks
+                                );
+                                const distData = Object.entries(filteredDistribution).map(([label, data]: [string, any]) => ({
                                   一致性级别: label,
                                   样本数: data.count,
                                   百分比: data.percentage.toFixed(2) + '%',
@@ -1316,7 +1369,10 @@ export default function TaskComparisonPage() {
                       </div>
                       <div data-chart-type="consistency-distribution">
                         <ConsistencyDistributionChart
-                          consistencyDistribution={result.consistency_distribution}
+                          consistencyDistribution={recalculateConsistencyDistribution(
+                            filterByConfidence(result.sample_details || []),
+                            result.n_tasks
+                          )}
                           nTasks={result.n_tasks}
                           filteredSampleCount={filterByConfidence(result.sample_details || []).length}
                         />
@@ -1381,13 +1437,14 @@ export default function TaskComparisonPage() {
                         <MultiTargetScatterChart
                           comparisonData={{
                             ...result,
-                            sample_details: filterByConfidence(result.sample_details || [])
+                            sample_details: result.sample_details || []
                           }}
                           taskNames={Object.fromEntries(
                             tasks
                               .filter(t => result.task_ids.includes(t.task_id))
                               .map(t => [t.task_id, getTaskDisplayName(t)])
                           )}
+                          confidenceFilter={confidenceFilter}
                         />
                       </div>
                     </div>
@@ -1403,7 +1460,11 @@ export default function TaskComparisonPage() {
                               label: '导出为 CSV',
                               format: 'csv',
                               onClick: () => {
-                                const statsData = Object.entries(result.consistency_distribution).map(([label, data]: [string, any]) => ({
+                                const filteredDistribution = recalculateConsistencyDistribution(
+                                  filterByConfidence(result.sample_details || []),
+                                  result.n_tasks
+                                );
+                                const statsData = Object.entries(filteredDistribution).map(([label, data]: [string, any]) => ({
                                   一致性级别: label,
                                   样本数: data.count,
                                   百分比: data.percentage.toFixed(1) + '%',
@@ -1418,7 +1479,11 @@ export default function TaskComparisonPage() {
                               label: '导出为 Excel',
                               format: 'excel',
                               onClick: () => {
-                                const statsData = Object.entries(result.consistency_distribution).map(([label, data]: [string, any]) => ({
+                                const filteredDistribution = recalculateConsistencyDistribution(
+                                  filterByConfidence(result.sample_details || []),
+                                  result.n_tasks
+                                );
+                                const statsData = Object.entries(filteredDistribution).map(([label, data]: [string, any]) => ({
                                   一致性级别: label,
                                   样本数: data.count,
                                   百分比: data.percentage.toFixed(1) + '%',
@@ -1434,7 +1499,11 @@ export default function TaskComparisonPage() {
                               label: '导出为 HTML',
                               format: 'html',
                               onClick: () => {
-                                const statsData = Object.entries(result.consistency_distribution).map(([label, data]: [string, any]) => ({
+                                const filteredDistribution = recalculateConsistencyDistribution(
+                                  filterByConfidence(result.sample_details || []),
+                                  result.n_tasks
+                                );
+                                const statsData = Object.entries(filteredDistribution).map(([label, data]: [string, any]) => ({
                                   一致性级别: label,
                                   样本数: data.count,
                                   百分比: data.percentage.toFixed(1) + '%',
@@ -1465,7 +1534,10 @@ export default function TaskComparisonPage() {
                             </tr>
                           </thead>
                           <tbody className="bg-white divide-y divide-gray-200">
-                            {Object.entries(result.consistency_distribution).map(([label, data]: [string, any]) => (
+                            {Object.entries(recalculateConsistencyDistribution(
+                              filterByConfidence(result.sample_details || []),
+                              result.n_tasks
+                            )).map(([label, data]: [string, any]) => (
                               <tr key={label}>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                                   {label}

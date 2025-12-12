@@ -78,6 +78,13 @@ class PromptPreviewRequest(BaseModel):
     feature_columns: Optional[List[str]] = Field(default=None, description="特征列名列表（可选）")
     reference_samples: Optional[List[Dict]] = Field(default=[], description="参考样本列表")
 
+    # 迭代预测相关字段
+    iteration: int = Field(default=1, description="迭代轮次（默认为1，表示第一轮预测）")
+    iteration_history: Optional[Dict[str, List[float]]] = Field(
+        default=None,
+        description="迭代历史数据，格式为 {target_property: [value1, value2, ...]}"
+    )
+
 class PromptPreviewResponse(BaseModel):
     """提示词预览响应"""
     rendered_prompt: str = Field(..., description="渲染后的完整提示词")
@@ -231,12 +238,24 @@ async def preview_template(request: PromptPreviewRequest):
             )
             retrieved_samples.append((sample_text, 1.0, sample))
 
-        # 使用 PromptBuilder 统一构建完整提示词（支持单/多目标 + 自定义模板）
+        # 格式化迭代历史（如果是第2轮及以后）
+        iteration_history_str = None
+        if request.iteration > 1 and request.iteration_history:
+            # 使用 PromptBuilder 的方法格式化迭代历史
+            iteration_history_str = prompt_builder.format_multi_target_iteration_history(
+                sample_idx=0,  # 预览时使用固定的样本索引
+                target_properties=request.target_columns,
+                history=request.iteration_history
+            )
+
+        # 使用 PromptBuilder 统一构建完整提示词（支持单/多目标 + 自定义模板 + 迭代预测）
         try:
             prompt = prompt_builder.build_prompt(
                 retrieved_samples=retrieved_samples,
                 test_sample=test_sample_text,
                 target_properties=request.target_columns,
+                iteration=request.iteration,
+                iteration_history=iteration_history_str
             )
         except Exception as build_error:
             logger.error(f"构建提示词时发生错误: {build_error}", exc_info=True)
@@ -270,7 +289,7 @@ async def preview_template(request: PromptPreviewRequest):
         # 应用列名映射到测试样本（与 PromptBuilder.build_prompt() 保持一致）
         mapped_test_sample = prompt_builder._apply_column_name_mapping(test_sample_text)  # type: ignore[attr-defined]
 
-        # 统一的模板变量（支持单目标和多目标）
+        # 统一的模板变量（支持单目标和多目标 + 迭代预测）
         template_variables: Dict[str, Any] = {
             "test_sample": mapped_test_sample,  # 使用映射后的测试样本文本
             "reference_samples": reference_samples,  # 统一使用 reference_samples
@@ -280,7 +299,12 @@ async def preview_template(request: PromptPreviewRequest):
             "processing": processing_str,  # 使用提取的工艺字符串（可能为空字符串）
             "unit": unit,
             "reference_samples_count": len(similar_samples),
+            "iteration": request.iteration,  # 迭代轮次
         }
+
+        # 添加迭代历史（如果有）
+        if request.iteration > 1 and iteration_history_str:
+            template_variables["iteration_history"] = iteration_history_str
 
         # 预测 JSON 模板（统一格式）
         if template_dict.get("predictions_json_template"):

@@ -263,7 +263,7 @@ def _run_iterative_prediction_task(task_id: str, file_path: Path, config):
 
             train_data.append(sample_data)
 
-        # 构建测试样本数据
+        # 构建测试样本数据（保留所有原始列，确保 CSV 格式完整）
         test_data = []
         for idx, row in test_df.iterrows():
             composition_str = format_composition(row, composition_columns)
@@ -282,18 +282,17 @@ def _run_iterative_prediction_task(task_id: str, file_path: Path, config):
                     if feat_col in row.index and pd.notna(row[feat_col]):
                         feature_dict[feat_col] = row[feat_col]
 
-            # 保存样本数据
-            sample_data = {
-                "composition": composition_str
-            }
+            # 构建样本文本
+            sample_text = SampleTextBuilder.build_sample_text(
+                composition=composition_str,
+                processing_columns=processing_dict if processing_dict else None,
+                feature_columns=feature_dict if feature_dict else None
+            )
 
-            # 添加工艺列
-            if processing_dict:
-                sample_data.update(processing_dict)
-
-            # 添加特征列
-            if feature_dict:
-                sample_data.update(feature_dict)
+            # 保存样本数据（保留所有原始列）
+            sample_data = row.to_dict()  # 保留所有原始列
+            sample_data["composition"] = composition_str  # 添加格式化的 composition 字符串
+            sample_data["sample_text"] = sample_text  # 添加样本文本
 
             test_data.append(sample_data)
 

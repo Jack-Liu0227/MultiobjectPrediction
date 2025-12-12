@@ -25,6 +25,7 @@ interface MultiTargetScatterChartProps {
     sample_details: Array<{
       sample_index: number;
       consistency_level: number;
+      confidence?: string;
       targets: {
         [targetName: string]: {
           actual_value: number;
@@ -46,6 +47,7 @@ interface MultiTargetScatterChartProps {
     };
   };
   taskNames?: { [taskId: string]: string }; // Map of task ID to task name
+  confidenceFilter?: 'all' | 'high' | 'medium' | 'low';
 }
 
 // Color mapping based on consistency level
@@ -76,8 +78,20 @@ const getConsistencyLabel = (level: number, nTasks: number): string => {
 const MultiTargetScatterChart = React.memo(function MultiTargetScatterChart({
   comparisonData,
   taskNames,
+  confidenceFilter = 'all',
 }: MultiTargetScatterChartProps) {
   const { sample_details, task_ids, target_columns, n_tasks, target_metrics } = comparisonData;
+
+  // Filter samples by confidence
+  const filteredSamples = React.useMemo(() => {
+    if (confidenceFilter === 'all') {
+      return sample_details;
+    }
+    return sample_details.filter(sample => {
+      const confidence = sample.confidence?.toLowerCase();
+      return confidence === confidenceFilter;
+    });
+  }, [sample_details, confidenceFilter]);
 
   // Helper function to get task display name
   const getTaskName = (taskId: string, index: number): string => {
@@ -87,12 +101,77 @@ const MultiTargetScatterChart = React.memo(function MultiTargetScatterChart({
     return `Task ${index + 1}`;
   };
 
+  // Calculate metrics dynamically based on filtered samples
+  const calculatedMetrics = React.useMemo(() => {
+    const metrics: {
+      [targetName: string]: {
+        [taskId: string]: {
+          mae: number;
+          rmse: number;
+          r2: number;
+        };
+      };
+    } = {};
+
+    target_columns.forEach(targetName => {
+      metrics[targetName] = {};
+
+      task_ids.forEach(taskId => {
+        const validSamples = filteredSamples.filter(sample => {
+          const targetData = sample.targets[targetName];
+          return targetData && targetData.predictions[taskId] !== undefined;
+        });
+
+        if (validSamples.length === 0) {
+          metrics[targetName][taskId] = { mae: 0, rmse: 0, r2: 0 };
+          return;
+        }
+
+        // Calculate MAE
+        const mae = validSamples.reduce((sum, sample) => {
+          const targetData = sample.targets[targetName];
+          return sum + Math.abs(targetData.predictions[taskId] - targetData.actual_value);
+        }, 0) / validSamples.length;
+
+        // Calculate RMSE
+        const mse = validSamples.reduce((sum, sample) => {
+          const targetData = sample.targets[targetName];
+          const error = targetData.predictions[taskId] - targetData.actual_value;
+          return sum + error * error;
+        }, 0) / validSamples.length;
+        const rmse = Math.sqrt(mse);
+
+        // Calculate R²
+        const actualMean = validSamples.reduce((sum, sample) => {
+          return sum + sample.targets[targetName].actual_value;
+        }, 0) / validSamples.length;
+
+        const ssTotal = validSamples.reduce((sum, sample) => {
+          const diff = sample.targets[targetName].actual_value - actualMean;
+          return sum + diff * diff;
+        }, 0);
+
+        const ssResidual = validSamples.reduce((sum, sample) => {
+          const targetData = sample.targets[targetName];
+          const diff = targetData.actual_value - targetData.predictions[taskId];
+          return sum + diff * diff;
+        }, 0);
+
+        const r2 = ssTotal > 0 ? 1 - (ssResidual / ssTotal) : 0;
+
+        metrics[targetName][taskId] = { mae, rmse, r2 };
+      });
+    });
+
+    return metrics;
+  }, [filteredSamples, target_columns, task_ids]);
+
   // Prepare data for each target property
   // For each target, create one data point per task per sample
   const targetChartData = target_columns.map((targetName) => {
     const chartData: any[] = [];
 
-    sample_details.forEach((sample) => {
+    filteredSamples.forEach((sample) => {
       const targetData = sample.targets[targetName];
       if (!targetData) return;
 
@@ -267,12 +346,19 @@ const MultiTargetScatterChart = React.memo(function MultiTargetScatterChart({
           </ResponsiveContainer>
           </div>
 
-          {/* Performance Metrics */}
-          {target_metrics && target_metrics[targetName] && (
+          {/* Performance Metrics - Use calculated metrics based on filtered data */}
+          {calculatedMetrics && calculatedMetrics[targetName] && (
             <div className="mt-6">
-              <h4 className="text-md font-semibold text-gray-700 mb-3">Performance Metrics by Task</h4>
+              <h4 className="text-md font-semibold text-gray-700 mb-3">
+                Performance Metrics by Task
+                {confidenceFilter !== 'all' && (
+                  <span className="ml-2 text-xs font-normal text-gray-500">
+                    (Filtered by {confidenceFilter} confidence)
+                  </span>
+                )}
+              </h4>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {Object.entries(target_metrics[targetName]).map(([taskId, metrics]) => {
+                {Object.entries(calculatedMetrics[targetName]).map(([taskId, metrics]) => {
                   const taskIndex = task_ids.indexOf(taskId);
                   const taskDisplayName = getTaskName(taskId, taskIndex);
                   return (

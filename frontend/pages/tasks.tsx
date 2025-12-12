@@ -15,6 +15,11 @@ interface Task {
   task_id: string;
   status: string;
   filename: string;
+  file_id?: string; // 关联的数据集ID或文件ID
+  total_rows?: number; // 测试集样本数（任务完成后更新）
+  valid_rows?: number; // 测试集有效样本数（任务完成后更新）
+  original_total_rows?: number; // 已废弃：不再使用
+  original_valid_rows?: number; // 已废弃：不再使用
   composition_column?: string | string[];
   processing_column?: string | string[];
   target_columns: string[];
@@ -36,6 +41,23 @@ interface Task {
   sample_size?: number;
   workers?: number;
   feature_columns?: string[];
+}
+
+interface Dataset {
+  dataset_id: string;
+  filename: string;
+  original_filename: string;
+  file_path: string;
+  row_count: number; // 原始数据集总行数
+  column_count: number;
+  columns: string[];
+  file_size: number;
+  file_hash?: string;
+  uploaded_at: string;
+  last_used_at?: string;
+  description?: string;
+  tags: string[];
+  usage_count: number;
 }
 
 export default function TasksPage() {
@@ -62,6 +84,9 @@ export default function TasksPage() {
   const total = data?.total || 0;
   const loading = isLoading;
 
+  // 确保 error 是字符串类型
+  const errorMessage = error ? (typeof error === 'string' ? error : error.message || '加载失败') : null;
+
   // 编辑状态 - 支持多字段编辑
   const [editingCell, setEditingCell] = useState<{taskId: string, field: 'note' | 'filename' | 'taskId'} | null>(null);
   const [editingValue, setEditingValue] = useState<string>('');
@@ -76,6 +101,39 @@ export default function TasksPage() {
   // 任务详情加载状态（独立于列表加载状态）
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+
+  // 批量重新预测状态
+  const [showBatchRerunDialog, setShowBatchRerunDialog] = useState(false);
+  const [batchRerunTasks, setBatchRerunTasks] = useState<Task[]>([]);
+  const [batchRerunLoading, setBatchRerunLoading] = useState(false);
+  const [batchRerunNotes, setBatchRerunNotes] = useState<Map<string, string>>(new Map());
+  const [batchRerunConfigs, setBatchRerunConfigs] = useState<Map<string, any>>(new Map());
+
+  // 配置编辑对话框状态
+  const [showConfigEditDialog, setShowConfigEditDialog] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingConfig, setEditingConfig] = useState<any>(null);
+  const [applyToAll, setApplyToAll] = useState(false);
+  const [configTab, setConfigTab] = useState<'basic' | 'rag' | 'llm' | 'advanced'>('basic');
+  const [editingTaskDataset, setEditingTaskDataset] = useState<Dataset | null>(null); // 当前编辑任务的数据集信息
+  const [retrievalRatioInput, setRetrievalRatioInput] = useState<string>(''); // 检索比例输入框的临时值
+
+  // 批量增量预测状态
+  const [showBatchIncrementalDialog, setShowBatchIncrementalDialog] = useState(false);
+
+  // 数据集信息缓存（用于批量重新预测对话框）
+  const [datasetCache, setDatasetCache] = useState<Map<string, Dataset>>(new Map());
+  const [batchIncrementalTasks, setBatchIncrementalTasks] = useState<Task[]>([]);
+  const [batchIncrementalLoading, setBatchIncrementalLoading] = useState(false);
+
+  // 批量停止状态
+  const [showBatchCancelDialog, setShowBatchCancelDialog] = useState(false);
+  const [batchCancelTasks, setBatchCancelTasks] = useState<Task[]>([]);
+  const [batchCancelLoading, setBatchCancelLoading] = useState(false);
+
+  // LLM 模型列表状态
+  const [availableModels, setAvailableModels] = useState<any[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
 
   // 函数定义必须在所有 hooks 之前或之后，不能在条件返回之后
   const loadTaskDetail = async (taskId: string) => {
@@ -100,6 +158,45 @@ export default function TasksPage() {
       setDetailError(err.message || '加载任务详情失败');
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  // 加载可用 LLM 模型
+  const loadAvailableModels = async () => {
+    try {
+      setLoadingModels(true);
+      const response = await fetch('http://localhost:8000/api/llm/models');
+      const data = await response.json();
+      setAvailableModels(data.models || []);
+    } catch (error) {
+      console.error('Failed to load LLM models:', error);
+    } finally {
+      setLoadingModels(false);
+    }
+  };
+
+  // 获取数据集信息（带缓存）
+  const getDatasetInfo = async (datasetId: string): Promise<Dataset | null> => {
+    // 检查缓存
+    if (datasetCache.has(datasetId)) {
+      return datasetCache.get(datasetId)!;
+    }
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/datasets/${datasetId}`);
+      if (!response.ok) {
+        console.error(`Failed to fetch dataset ${datasetId}: ${response.statusText}`);
+        return null;
+      }
+      const dataset: Dataset = await response.json();
+
+      // 更新缓存
+      setDatasetCache(prev => new Map(prev).set(datasetId, dataset));
+
+      return dataset;
+    } catch (err: any) {
+      console.error(`Error fetching dataset ${datasetId}:`, err);
+      return null;
     }
   };
 
@@ -215,6 +312,276 @@ export default function TasksPage() {
     } catch (err: any) {
       alert(err.message || '批量删除失败');
     }
+  };
+
+  // 批量重新预测 - 打开预览对话框
+  const handleBatchRerun = () => {
+    if (selectedTaskIds.size === 0) {
+      alert('请先选择要重新预测的任务');
+      return;
+    }
+
+    // 只允许已完成、失败或取消的任务进行重新预测
+    const selectedTasks = tasks.filter(t => selectedTaskIds.has(t.task_id));
+    const invalidTasks = selectedTasks.filter(t =>
+      t.status !== 'completed' && t.status !== 'failed' && t.status !== 'cancelled'
+    );
+
+    if (invalidTasks.length > 0) {
+      alert(`只能重新预测已完成、失败或已取消的任务。\n当前选中了 ${invalidTasks.length} 个不符合条件的任务。`);
+      return;
+    }
+
+    setBatchRerunTasks(selectedTasks);
+
+    // 初始化备注状态（使用原任务的备注）
+    const initialNotes = new Map<string, string>();
+    selectedTasks.forEach(task => {
+      if (task.note) {
+        initialNotes.set(task.task_id, task.note);
+      }
+    });
+    setBatchRerunNotes(initialNotes);
+
+    // 初始化配置状态（使用原任务的配置）
+    const initialConfigs = new Map<string, any>();
+    selectedTasks.forEach(task => {
+      initialConfigs.set(task.task_id, {
+        // LLM 配置
+        model_provider: task.model_provider,
+        model_name: task.model_name,
+        temperature: task.temperature,
+        // 基础配置
+        sample_size: task.sample_size,
+        workers: task.workers,
+        train_ratio: task.train_ratio,
+        random_seed: task.random_seed || 42,
+        // RAG 配置
+        max_retrieved_samples: task.max_retrieved_samples,
+        similarity_threshold: task.similarity_threshold,
+        // 列配置（只读）
+        composition_column: task.composition_column,
+        processing_column: task.processing_column,
+        target_columns: task.target_columns,
+        feature_columns: task.feature_columns,
+      });
+    });
+    setBatchRerunConfigs(initialConfigs);
+
+    setShowBatchRerunDialog(true);
+  };
+
+  // 确认批量重新预测
+  const handleConfirmBatchRerun = async () => {
+    setBatchRerunLoading(true);
+    try {
+      const rerunPromises = batchRerunTasks.map(task => {
+        const note = batchRerunNotes.get(task.task_id);
+        const config = batchRerunConfigs.get(task.task_id);
+
+        const options: any = {};
+        if (note) options.note = note;
+        if (config) options.config = config;
+
+        return rerunTask(task.task_id, Object.keys(options).length > 0 ? options : undefined);
+      });
+      await Promise.all(rerunPromises);
+
+      setShowBatchRerunDialog(false);
+      setBatchRerunTasks([]);
+      setBatchRerunNotes(new Map());
+      setBatchRerunConfigs(new Map());
+      setSelectedTaskIds(new Set());
+
+      alert(`成功创建 ${batchRerunTasks.length} 个重新预测任务`);
+      loadTasks();
+    } catch (err: any) {
+      alert(err.message || '批量重新预测失败');
+    } finally {
+      setBatchRerunLoading(false);
+    }
+  };
+
+  // 打开配置编辑对话框
+  const handleEditConfig = (taskId: string, applyAll: boolean = false) => {
+    const config = batchRerunConfigs.get(taskId);
+    setEditingTaskId(taskId);
+    setEditingConfig({ ...config });
+    setApplyToAll(applyAll);
+    setShowConfigEditDialog(true);
+  };
+
+  // 保存配置编辑
+  const handleSaveConfig = () => {
+    if (!editingTaskId || !editingConfig) return;
+
+    // 验证配置
+    if (editingConfig.temperature < 0 || editingConfig.temperature > 2) {
+      alert('温度参数必须在 0-2 之间');
+      return;
+    }
+    if (editingConfig.sample_size <= 0) {
+      alert('样本数量必须大于 0');
+      return;
+    }
+    if (editingConfig.workers <= 0 || editingConfig.workers > 20) {
+      alert('并发数必须在 1-20 之间');
+      return;
+    }
+    if (editingConfig.train_ratio < 0.5 || editingConfig.train_ratio > 0.9) {
+      alert('训练集比例必须在 0.5-0.9 之间');
+      return;
+    }
+    if (editingConfig.max_retrieved_samples < 0) {
+      alert('最大检索样本数不能为负数');
+      return;
+    }
+    if (editingConfig.similarity_threshold < 0 || editingConfig.similarity_threshold > 1) {
+      alert('相似度阈值必须在 0-1 之间');
+      return;
+    }
+    if (editingConfig.random_seed && (editingConfig.random_seed < 1 || editingConfig.random_seed > 9999)) {
+      alert('随机种子必须在 1-9999 之间');
+      return;
+    }
+
+    const newConfigs = new Map(batchRerunConfigs);
+
+    if (applyToAll) {
+      // 应用到所有任务（保留每个任务的列配置）
+      batchRerunTasks.forEach(task => {
+        const originalConfig = batchRerunConfigs.get(task.task_id);
+        newConfigs.set(task.task_id, {
+          ...editingConfig,
+          // 保留原任务的列配置
+          composition_column: originalConfig?.composition_column,
+          processing_column: originalConfig?.processing_column,
+          target_columns: originalConfig?.target_columns,
+          feature_columns: originalConfig?.feature_columns,
+        });
+      });
+    } else {
+      // 只应用到当前任务
+      newConfigs.set(editingTaskId, { ...editingConfig });
+    }
+
+    setBatchRerunConfigs(newConfigs);
+    setShowConfigEditDialog(false);
+    setEditingTaskId(null);
+    setEditingConfig(null);
+    setApplyToAll(false);
+    setConfigTab('basic');
+  };
+
+  // 批量增量预测 - 打开预览对话框
+  const handleBatchIncremental = () => {
+    if (selectedTaskIds.size === 0) {
+      alert('请先选择要增量预测的任务');
+      return;
+    }
+
+    // 允许所有状态的任务进行增量预测（移除状态限制）
+    const selectedTasks = tasks.filter(t => selectedTaskIds.has(t.task_id));
+
+    setBatchIncrementalTasks(selectedTasks);
+    setShowBatchIncrementalDialog(true);
+  };
+
+  // 确认批量增量预测
+  const handleConfirmBatchIncremental = async () => {
+    setBatchIncrementalLoading(true);
+    try {
+      const { incrementalPredictTask } = await import('../lib/api');
+      const incrementalPromises = batchIncrementalTasks.map(task => incrementalPredictTask(task.task_id));
+      await Promise.all(incrementalPromises);
+
+      setShowBatchIncrementalDialog(false);
+      setBatchIncrementalTasks([]);
+      setSelectedTaskIds(new Set());
+
+      alert(`成功启动 ${batchIncrementalTasks.length} 个增量预测任务`);
+      loadTasks();
+    } catch (err: any) {
+      alert(err.message || '批量增量预测失败');
+    } finally {
+      setBatchIncrementalLoading(false);
+    }
+  };
+
+  // 批量停止 - 打开确认对话框
+  const handleBatchCancel = () => {
+    if (selectedTaskIds.size === 0) {
+      alert('请先选择要停止的任务');
+      return;
+    }
+
+    // 只允许运行中或等待中的任务被停止
+    const selectedTasks = tasks.filter(t => selectedTaskIds.has(t.task_id));
+    const cancellableTasks = selectedTasks.filter(t =>
+      t.status === 'running' || t.status === 'pending'
+    );
+
+    if (cancellableTasks.length === 0) {
+      alert('选中的任务中没有可以停止的任务（只能停止运行中或等待中的任务）');
+      return;
+    }
+
+    if (cancellableTasks.length < selectedTasks.length) {
+      const nonCancellable = selectedTasks.length - cancellableTasks.length;
+      if (!confirm(`选中的 ${selectedTasks.length} 个任务中，有 ${nonCancellable} 个任务无法停止（状态不是运行中或等待中）。\n是否继续停止其余 ${cancellableTasks.length} 个任务？`)) {
+        return;
+      }
+    }
+
+    setBatchCancelTasks(cancellableTasks);
+    setShowBatchCancelDialog(true);
+  };
+
+  // 确认批量停止
+  const handleConfirmBatchCancel = async () => {
+    setBatchCancelLoading(true);
+    try {
+      const { batchCancelTasks: batchCancelTasksApi } = await import('../lib/api');
+      const taskIds = batchCancelTasks.map(t => t.task_id);
+      const result = await batchCancelTasksApi(taskIds);
+
+      setShowBatchCancelDialog(false);
+      setBatchCancelTasks([]);
+      setSelectedTaskIds(new Set());
+
+      if (result.failed > 0) {
+        alert(`批量停止完成：成功 ${result.success} 个，失败 ${result.failed} 个`);
+      } else {
+        alert(`成功停止 ${result.success} 个任务`);
+      }
+
+      loadTasks();
+    } catch (err: any) {
+      alert(err.message || '批量停止失败');
+    } finally {
+      setBatchCancelLoading(false);
+    }
+  };
+
+  // 文本截断组件 - 带 tooltip
+  const TruncatedText = ({ text, maxLength = 50, className = "" }: { text: string; maxLength?: number; className?: string }) => {
+    const isTruncated = text && text.length > maxLength;
+    const displayText = isTruncated ? text.substring(0, maxLength) + '...' : text;
+
+    if (!isTruncated) {
+      return <span className={className}>{text || '-'}</span>;
+    }
+
+    return (
+      <div className="relative group inline-block">
+        <span className={className}>{displayText}</span>
+        {/* Tooltip */}
+        <div className="absolute z-50 invisible group-hover:visible bg-gray-900 text-white text-xs rounded-lg p-3 w-80 left-0 top-full mt-1 shadow-lg break-words whitespace-pre-wrap">
+          {text}
+          <div className="absolute -top-1 left-4 w-2 h-2 bg-gray-900 transform rotate-45"></div>
+        </div>
+      </div>
+    );
   };
 
   const getStatusBadge = (status: string) => {
@@ -336,6 +703,7 @@ export default function TasksPage() {
   // Hooks 必须在所有函数定义之后，但在任何条件返回之前
   useEffect(() => {
     setMounted(true);
+    loadAvailableModels(); // 加载可用模型列表
   }, []);
 
   // 如果有 id 参数，加载单个任务详情
@@ -378,6 +746,25 @@ export default function TasksPage() {
       taskEvents.off('note-updated', handleNoteUpdate);
     };
   }, [handleNoteUpdate]);
+
+  // 当编辑任务时，获取数据集信息
+  useEffect(() => {
+    if (!editingTaskId) {
+      setEditingTaskDataset(null);
+      return;
+    }
+
+    const currentTask = batchRerunTasks.find(t => t.task_id === editingTaskId);
+    if (!currentTask?.file_id) {
+      setEditingTaskDataset(null);
+      return;
+    }
+
+    // 异步获取数据集信息
+    getDatasetInfo(currentTask.file_id).then(dataset => {
+      setEditingTaskDataset(dataset);
+    });
+  }, [editingTaskId, batchRerunTasks]);
 
   // 在客户端挂载之前不渲染任何内容，避免 hydration 错误
   if (!mounted) {
@@ -432,9 +819,9 @@ export default function TasksPage() {
         <div className="max-w-7xl mx-auto px-4 py-8">
 
         {/* 错误提示 */}
-        {(error || detailError) && (
+        {(errorMessage || detailError) && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded">
-            <p className="text-red-600">{error || detailError}</p>
+            <p className="text-red-600">{errorMessage || detailError}</p>
           </div>
         )}
 
@@ -506,6 +893,19 @@ export default function TasksPage() {
                   {selectedTask.filename}
                 </div>
               </div>
+              {/* 数据统计信息 */}
+              {(selectedTask.total_rows !== undefined || selectedTask.valid_rows !== undefined) && (
+                <div>
+                  <span className="text-gray-500 text-xs">数据统计:</span>
+                  <div className="font-medium text-sm mt-0.5 bg-white p-2 rounded border border-gray-200">
+                    <div className="flex items-center gap-2">
+                      <span className="text-blue-600">总行数: {selectedTask.total_rows ?? '-'}</span>
+                      <span className="text-gray-400">|</span>
+                      <span className="text-green-600">有效行数: {selectedTask.valid_rows ?? '-'}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
               {selectedTask.note && (
                 <div>
                   <span className="text-gray-500 text-xs">备注:</span>
@@ -664,7 +1064,7 @@ export default function TasksPage() {
               </button>
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">任务历史</h1>
-                <p className="text-sm text-gray-500 mt-1">查看和管理所有预测任务</p>
+                <p className="text-sm text-gray-500 mt-1">查看和管理所有预测任务 {total > 0 && `(共 ${total} 个)`}</p>
               </div>
             </div>
             <div className="flex gap-3">
@@ -818,6 +1218,36 @@ export default function TasksPage() {
               已选择 {selectedTaskIds.size} 个任务
             </div>
             <button
+              onClick={handleBatchRerun}
+              className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 flex items-center gap-2"
+              title="批量重新预测选中的任务（创建新任务）"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              批量重新预测
+            </button>
+            <button
+              onClick={handleBatchIncremental}
+              className="px-4 py-2 bg-cyan-500 text-white rounded hover:bg-cyan-600 flex items-center gap-2"
+              title="批量增量预测选中的任务（继续预测未完成的样本）"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              批量增量预测
+            </button>
+            <button
+              onClick={handleBatchCancel}
+              className="px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 flex items-center gap-2"
+              title="批量停止选中的运行中或等待中的任务"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              批量停止
+            </button>
+            <button
               onClick={handleBatchDelete}
               className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
             >
@@ -834,9 +1264,9 @@ export default function TasksPage() {
       </div>
 
       {/* 错误提示 */}
-      {error && (
+      {errorMessage && (
         <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded">
-          <p className="text-red-600">{error}</p>
+          <p className="text-red-600">{errorMessage}</p>
         </div>
       )}
 
@@ -856,11 +1286,11 @@ export default function TasksPage() {
       )}
 
       {!loading && tasks.length > 0 && (
-        <div className="bg-white rounded-lg shadow overflow-x-auto">
+        <div className="bg-white rounded-lg shadow overflow-x-auto" style={{ maxHeight: 'calc(100vh - 320px)', overflowY: 'auto' }}>
           <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+            <thead className="bg-gray-50 sticky top-0 z-10">
               <tr>
-                <th className="px-4 py-3 text-left w-12">
+                <th className="px-4 py-3 text-left w-12 bg-gray-50">
                   <input
                     type="checkbox"
                     checked={selectedTaskIds.size === tasks.length && tasks.length > 0}
@@ -868,34 +1298,37 @@ export default function TasksPage() {
                     className="rounded border-gray-300"
                   />
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24 bg-gray-50">
                   状态
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase min-w-[280px]">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[200px] bg-gray-50">
                   任务ID
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase min-w-[180px]">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[280px] bg-gray-50">
                   文件名
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase min-w-[200px]">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[140px] bg-gray-50">
+                  数据统计
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[250px] bg-gray-50">
                   备注
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase min-w-[120px]">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[180px] bg-gray-50">
                   目标列
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[160px] bg-gray-50">
                   模型
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[140px] bg-gray-50">
                   配置参数
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-36">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[140px] bg-gray-50">
                   创建时间
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-36">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[140px] bg-gray-50">
                   完成时间
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase min-w-[300px]">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[280px] bg-gray-50">
                   操作
                 </th>
               </tr>
@@ -931,28 +1364,47 @@ export default function TasksPage() {
                   {/* 任务ID - 完整显示，可双击复制 */}
                   <td className="px-4 py-4">
                     <div
-                      className="font-mono text-xs text-gray-700 cursor-pointer hover:bg-blue-50 px-2 py-1 rounded break-all"
+                      className="font-mono text-xs text-gray-700 cursor-pointer hover:bg-blue-50 px-2 py-1 rounded"
                       onDoubleClick={() => {
                         navigator.clipboard.writeText(task.task_id);
                         alert('任务ID已复制到剪贴板');
                       }}
-                      title="双击复制完整任务ID"
+                      title={`双击复制完整任务ID: ${task.task_id}`}
                     >
-                      {task.task_id}
+                      <TruncatedText
+                        text={task.task_id}
+                        maxLength={24}
+                        className="font-mono text-xs text-gray-700"
+                      />
                     </div>
                   </td>
 
-                  {/* 文件名 - 完整显示 */}
+                  {/* 文件名 - 使用截断显示 */}
                   <td className="px-4 py-4">
-                    <div
-                      className="text-sm font-medium text-gray-900 break-words"
-                      title={task.filename}
-                    >
-                      {task.filename}
-                    </div>
+                    <TruncatedText
+                      text={task.filename}
+                      maxLength={35}
+                      className="text-sm font-medium text-gray-900"
+                    />
                   </td>
 
-                  {/* 备注 - 可双击编辑 */}
+                  {/* 数据统计 */}
+                  <td className="px-4 py-4 whitespace-nowrap">
+                    {(task.total_rows !== undefined || task.valid_rows !== undefined) ? (
+                      <div className="text-xs">
+                        <div className="text-blue-600 font-medium">
+                          总: {task.total_rows ?? '-'}
+                        </div>
+                        <div className="text-green-600">
+                          有效: {task.valid_rows ?? '-'}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-400">-</span>
+                    )}
+                  </td>
+
+                  {/* 备注 - 可双击编辑，使用截断显示 */}
                   <td className="px-4 py-4">
                     {editingCell?.taskId === task.task_id && editingCell?.field === 'note' ? (
                       <div className="flex items-center gap-2">
@@ -996,9 +1448,13 @@ export default function TasksPage() {
                         onDoubleClick={() => handleStartEdit(task, 'note')}
                         title="双击编辑备注"
                       >
-                        <span className="flex-1 break-words whitespace-pre-wrap text-sm">
-                          {task.note || <span className="text-gray-400">点击编辑...</span>}
-                        </span>
+                        <div className="flex-1 text-sm">
+                          {task.note ? (
+                            <TruncatedText text={task.note} maxLength={30} />
+                          ) : (
+                            <span className="text-gray-400">点击编辑...</span>
+                          )}
+                        </div>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1012,11 +1468,13 @@ export default function TasksPage() {
                       </div>
                     )}
                   </td>
-                  {/* 目标列 */}
+                  {/* 目标列 - 使用截断显示 */}
                   <td className="px-4 py-4">
-                    <div className="text-sm text-gray-900 break-words">
-                      {task.target_columns?.join(', ') || '-'}
-                    </div>
+                    <TruncatedText
+                      text={task.target_columns?.join(', ') || '-'}
+                      maxLength={20}
+                      className="text-sm text-gray-900"
+                    />
                   </td>
 
                   {/* 模型 */}
@@ -1120,16 +1578,14 @@ export default function TasksPage() {
                           重新预测
                         </button>
                       )}
-                      {/* 增量预测按钮：在已完成或失败状态时显示 */}
-                      {(task.status === 'completed' || task.status === 'failed') && (
-                        <button
-                          onClick={() => handleIncrementalPredict(task.task_id)}
-                          className="text-cyan-600 hover:text-cyan-900"
-                          title="继续预测未完成的样本"
-                        >
-                          增量预测
-                        </button>
-                      )}
+                      {/* 增量预测按钮：允许所有状态的任务 */}
+                      <button
+                        onClick={() => handleIncrementalPredict(task.task_id)}
+                        className="text-cyan-600 hover:text-cyan-900"
+                        title="继续预测未完成的样本"
+                      >
+                        增量预测
+                      </button>
                       <button
                         onClick={() => handleDelete(task.task_id)}
                         className="text-red-600 hover:text-red-900"
@@ -1168,6 +1624,869 @@ export default function TasksPage() {
         </div>
       )}
       </div>
+
+      {/* 批量重新预测预览对话框 */}
+      {showBatchRerunDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            {/* 对话框标题 */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">批量重新预测 - 配置预览</h2>
+              <button
+                onClick={() => setShowBatchRerunDialog(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* 对话框内容 */}
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-sm text-blue-800">
+                  <strong>提示：</strong>即将为以下 {batchRerunTasks.length} 个任务创建新的预测任务。
+                  每个任务将使用其原始配置从头开始重新预测所有样本。
+                </p>
+                <p className="text-sm text-blue-800 mt-2">
+                  💡 您可以点击"编辑配置"按钮修改每个任务的配置参数，或使用"应用相同配置到所有任务"快速设置。
+                </p>
+              </div>
+
+              {/* 全局操作按钮 */}
+              <div className="mb-4 flex gap-3">
+                <button
+                  onClick={() => {
+                    if (batchRerunTasks.length > 0) {
+                      handleEditConfig(batchRerunTasks[0].task_id, true);
+                    }
+                  }}
+                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  应用相同配置到所有任务
+                </button>
+                <button
+                  onClick={() => {
+                    setBatchRerunNotes(new Map());
+                  }}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  清除所有备注
+                </button>
+              </div>
+
+              {/* 任务配置预览表格 */}
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 border border-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-12">序号</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[150px]">任务ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[150px]">数据集</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[120px]">模型</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-16">温度</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-16">样本</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-20">训练比</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-20">检索数</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[150px]">备注</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {batchRerunTasks.map((task, index) => {
+                      const config = batchRerunConfigs.get(task.task_id);
+                      return (
+                        <tr key={task.task_id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 text-sm text-gray-900">{index + 1}</td>
+                          <td className="px-4 py-3 text-xs font-mono text-gray-700">
+                            <TruncatedText text={task.task_id} maxLength={15} />
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-900">
+                            <TruncatedText text={task.filename} maxLength={18} />
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-900">
+                            <div className="truncate text-xs">{config?.model_provider || '-'}</div>
+                            <div className="text-xs text-gray-500 truncate">{config?.model_name || '-'}</div>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-900 text-center">{config?.temperature ?? '-'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-900 text-center">{config?.sample_size || '-'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-900 text-center">
+                            {config?.train_ratio ? (config.train_ratio * 100).toFixed(0) + '%' : '-'}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-900 text-center">{config?.max_retrieved_samples ?? '-'}</td>
+                          <td className="px-4 py-3">
+                            <input
+                              type="text"
+                              value={batchRerunNotes.get(task.task_id) || ''}
+                              onChange={(e) => {
+                                const newNotes = new Map(batchRerunNotes);
+                                if (e.target.value) {
+                                  newNotes.set(task.task_id, e.target.value);
+                                } else {
+                                  newNotes.delete(task.task_id);
+                                }
+                                setBatchRerunNotes(newNotes);
+                              }}
+                              placeholder="添加备注..."
+                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <button
+                              onClick={() => handleEditConfig(task.task_id, false)}
+                              className="text-blue-600 hover:text-blue-900 text-sm"
+                            >
+                              编辑配置
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 对话框底部按钮 */}
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowBatchRerunDialog(false)}
+                disabled={batchRerunLoading}
+                className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmBatchRerun}
+                disabled={batchRerunLoading}
+                className="px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {batchRerunLoading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <span>创建中...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>确认创建 {batchRerunTasks.length} 个任务</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 批量增量预测预览对话框 */}
+      {showBatchIncrementalDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            {/* 对话框标题 */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">批量增量预测 - 配置预览</h2>
+              <button
+                onClick={() => setShowBatchIncrementalDialog(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* 对话框内容 */}
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="mb-4 p-4 bg-cyan-50 border border-cyan-200 rounded-lg">
+                <p className="text-sm text-cyan-800">
+                  <strong>提示：</strong>即将为以下 {batchIncrementalTasks.length} 个任务启动增量预测。
+                  增量预测将继续预测未完成的样本，不会重新创建任务。
+                </p>
+              </div>
+
+              {/* 任务配置预览表格 */}
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 border border-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-16">序号</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[180px]">任务ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[200px]">数据集</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[150px]">目标列</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[140px]">模型</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-20">样本数</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">训练比例</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">检索样本</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-28">相似度阈值</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[180px]">备注</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {batchIncrementalTasks.map((task, index) => (
+                      <tr key={task.task_id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-sm text-gray-900">{index + 1}</td>
+                        <td className="px-4 py-3 text-xs font-mono text-gray-700">
+                          <TruncatedText text={task.task_id} maxLength={20} />
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          <TruncatedText text={task.filename} maxLength={25} />
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          <TruncatedText text={task.target_columns?.join(', ') || '-'} maxLength={18} />
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          <div className="truncate">{task.model_provider || '-'}</div>
+                          <div className="text-xs text-gray-500 truncate">{task.model_name || '-'}</div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">{task.sample_size || '-'}</td>
+                        <td className="px-4 py-3 text-sm text-gray-900">{task.train_ratio || '-'}</td>
+                        <td className="px-4 py-3 text-sm text-gray-900">{task.max_retrieved_samples || '-'}</td>
+                        <td className="px-4 py-3 text-sm text-gray-900">{task.similarity_threshold || '-'}</td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          {task.note ? (
+                            <TruncatedText text={task.note} maxLength={22} />
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 对话框底部按钮 */}
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowBatchIncrementalDialog(false)}
+                disabled={batchIncrementalLoading}
+                className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmBatchIncremental}
+                disabled={batchIncrementalLoading}
+                className="px-6 py-2 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {batchIncrementalLoading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <span>启动中...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>确认启动 {batchIncrementalTasks.length} 个增量预测</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 配置编辑对话框 */}
+      {showConfigEditDialog && editingConfig && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            {/* 对话框标题 */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-900">
+                {applyToAll ? '编辑配置（应用到所有任务）' : '编辑任务配置'}
+              </h2>
+              <button
+                onClick={() => {
+                  setShowConfigEditDialog(false);
+                  setEditingTaskId(null);
+                  setEditingConfig(null);
+                  setApplyToAll(false);
+                  setConfigTab('basic');
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* 标签页导航 */}
+            <div className="border-b border-gray-200 bg-gray-50">
+              <nav className="flex px-6">
+                <button
+                  onClick={() => setConfigTab('basic')}
+                  className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${
+                    configTab === 'basic'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  🤖 基础配置
+                </button>
+                <button
+                  onClick={() => setConfigTab('rag')}
+                  className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${
+                    configTab === 'rag'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  🔍 RAG 配置
+                </button>
+                <button
+                  onClick={() => setConfigTab('llm')}
+                  className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${
+                    configTab === 'llm'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  ⚙️ LLM 配置
+                </button>
+                <button
+                  onClick={() => setConfigTab('advanced')}
+                  className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${
+                    configTab === 'advanced'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  🔧 高级配置
+                </button>
+              </nav>
+            </div>
+
+            {/* 对话框内容 */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {applyToAll && (
+                <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm text-blue-800">
+                    <strong>提示：</strong>保存后，此配置将应用到所有 {batchRerunTasks.length} 个任务。
+                  </p>
+                </div>
+              )}
+
+              {/* 基础配置标签页 */}
+              {configTab === 'basic' && (
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">基础配置</h3>
+
+                  {/* 样本数量 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      测试样本数量
+                      <span className="text-xs text-gray-500 ml-2">从测试集中随机抽取的样本数</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={editingConfig.sample_size || ''}
+                      onChange={(e) => setEditingConfig({ ...editingConfig, sample_size: parseInt(e.target.value) || 1 })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                    />
+                  </div>
+
+                  {/* 并发数 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      并发数 (Workers)
+                      <span className="text-xs text-gray-500 ml-2">并行预测的工作线程数</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={editingConfig.workers || ''}
+                      onChange={(e) => setEditingConfig({ ...editingConfig, workers: parseInt(e.target.value) || 1 })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">推荐值: 5-10</p>
+                  </div>
+
+                  {/* 训练集比例 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      训练集比例
+                      <span className="text-xs text-gray-500 ml-2">范围: 0.5-0.9</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={0.5}
+                      max={0.9}
+                      step={0.05}
+                      value={editingConfig.train_ratio ?? ''}
+                      onChange={(e) => setEditingConfig({ ...editingConfig, train_ratio: parseFloat(e.target.value) || 0.8 })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">推荐值: 0.8 (80%)</p>
+                  </div>
+
+                  {/* 随机种子 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      随机种子
+                      <span className="text-xs text-gray-500 ml-2">用于数据集划分的随机种子</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={9999}
+                      value={editingConfig.random_seed || 42}
+                      onChange={(e) => setEditingConfig({ ...editingConfig, random_seed: parseInt(e.target.value) || 42 })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">默认值: 42</p>
+                  </div>
+                </div>
+              )}
+
+              {/* RAG 配置标签页 */}
+              {configTab === 'rag' && (
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">RAG 检索配置</h3>
+
+                  {/* 数据集统计信息 */}
+                  {(() => {
+                    // 从数据集获取原始行数
+                    const datasetRowCount = editingTaskDataset?.row_count || 0;
+                    const hasDatasetInfo = !!editingTaskDataset;
+                    const trainRatio = editingConfig.train_ratio || 0.8;
+                    const trainCount = Math.floor(datasetRowCount * trainRatio);
+                    const testCount = datasetRowCount - trainCount;
+                    const retrievalRatio = trainCount > 0
+                      ? ((editingConfig.max_retrieved_samples || 0) / trainCount * 100).toFixed(2)
+                      : '0.00';
+
+                    return (
+                      <div className="space-y-2">
+                        {!hasDatasetInfo && (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-2">
+                            <p className="text-sm text-yellow-800">
+                              ⚠️ 无法获取数据集信息，请确保任务关联的数据集仍然存在
+                            </p>
+                          </div>
+                        )}
+                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                          <p className="text-sm text-gray-700">
+                            原始数据集：<strong>{datasetRowCount}</strong> 个样本
+                            {hasDatasetInfo && editingTaskDataset && (
+                              <span className="text-xs text-gray-500 ml-2">
+                                （来自数据集: {editingTaskDataset.original_filename}）
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-sm text-gray-700 mt-1">
+                            训练集：<strong>{trainCount}</strong> 个样本（{(trainRatio * 100).toFixed(0)}%）
+                          </p>
+                          <p className="text-sm text-gray-700 mt-1">
+                            测试集：<strong>{testCount}</strong> 个样本
+                          </p>
+                          <p className="text-sm text-gray-700 mt-1">
+                            检索样本数：<strong>{editingConfig.max_retrieved_samples || 0}</strong> 个（占训练集 <strong>{retrievalRatio}%</strong>）
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* 最大检索样本数 - 双输入模式（双向同步） */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      检索样本数量
+                    </label>
+                    <div className="flex items-center space-x-4">
+                      {/* 直接输入数量 */}
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="number"
+                          min={0}
+                          value={editingConfig.max_retrieved_samples ?? ''}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setEditingConfig({ ...editingConfig, max_retrieved_samples: 0 });
+                            } else {
+                              const numValue = parseInt(value);
+                              if (!isNaN(numValue) && numValue >= 0) {
+                                setEditingConfig({ ...editingConfig, max_retrieved_samples: numValue });
+                              }
+                            }
+                          }}
+                          className="w-32 border border-gray-300 rounded-lg px-3 py-2"
+                          placeholder="数量"
+                        />
+                        <span className="text-sm text-gray-600">个样本</span>
+                      </div>
+
+                      <span className="text-gray-400">或</span>
+
+                      {/* 比例输入 - 双向同步 */}
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="text"
+                          value={(() => {
+                            if (retrievalRatioInput !== '') {
+                              return retrievalRatioInput;
+                            }
+                            const datasetRowCount = editingTaskDataset?.row_count || 0;
+                            const trainRatio = editingConfig.train_ratio || 0.8;
+                            const trainCount = Math.floor(datasetRowCount * trainRatio);
+                            return trainCount > 0
+                              ? ((editingConfig.max_retrieved_samples || 0) / trainCount).toFixed(3)
+                              : '';
+                          })()}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setRetrievalRatioInput(value);
+                          }}
+                          onFocus={(e) => {
+                            // 获取焦点时，选中所有文本
+                            e.target.select();
+                            // 如果当前显示的是计算值，设置为输入状态
+                            if (retrievalRatioInput === '') {
+                              const datasetRowCount = editingTaskDataset?.row_count || 0;
+                              const trainRatio = editingConfig.train_ratio || 0.8;
+                              const trainCount = Math.floor(datasetRowCount * trainRatio);
+                              if (trainCount > 0) {
+                                const currentRatio = ((editingConfig.max_retrieved_samples || 0) / trainCount).toFixed(3);
+                                setRetrievalRatioInput(currentRatio);
+                              }
+                            }
+                          }}
+                          onBlur={() => {
+                            // 失去焦点时，计算并更新样本数
+                            const value = retrievalRatioInput;
+                            if (value === '') {
+                              return; // 如果为空，不做任何操作
+                            }
+                            const ratio = parseFloat(value);
+                            const datasetRowCount = editingTaskDataset?.row_count || 0;
+                            const trainRatio = editingConfig.train_ratio || 0.8;
+                            const trainCount = Math.floor(datasetRowCount * trainRatio);
+
+                            if (!isNaN(ratio) && ratio >= 0 && trainCount > 0) {
+                              // 允许超过 1 的比例
+                              const calculated = Math.round(ratio * trainCount);
+                              setEditingConfig({
+                                ...editingConfig,
+                                max_retrieved_samples: calculated >= 0 ? calculated : 0
+                              });
+                            }
+                            // 清空输入框，恢复显示计算值
+                            setRetrievalRatioInput('');
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.currentTarget.blur(); // 触发 onBlur 事件
+                            }
+                          }}
+                          className="w-32 border border-gray-300 rounded-lg px-3 py-2"
+                          placeholder="0.000"
+                          disabled={!editingTaskDataset}
+                          title={!editingTaskDataset ? "数据集信息不可用" : ""}
+                        />
+                        <span className="text-sm text-gray-600">比例 (0-1)</span>
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">
+                      💡 可直接输入数量（如50）或比例（如0.8表示80%）。两个输入框自动同步，修改任一字段即可。
+                    </p>
+                    {editingConfig.max_retrieved_samples === 0 && (
+                      <div className="mt-2 text-sm text-purple-600 bg-purple-50 border border-purple-200 rounded p-2">
+                        🔮 零样本模式：设置为 0 时，系统将使用零样本提示词模板，不检索参考样本，完全依赖 LLM 的知识进行预测
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 相似度阈值 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      相似度阈值
+                      <span className="text-xs text-gray-500 ml-2">范围: 0-1</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={editingConfig.similarity_threshold ?? ''}
+                      onChange={(e) => setEditingConfig({ ...editingConfig, similarity_threshold: parseFloat(e.target.value) || 0.3 })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      只返回相似度 ≥ 该阈值的样本。推荐值: 0.3
+                    </p>
+                  </div>
+
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-sm text-blue-800">
+                      💡 <strong>参数说明：</strong>
+                    </p>
+                    <ul className="text-sm text-blue-800 mt-2 space-y-1 list-disc list-inside">
+                      <li><strong>检索样本数</strong>：控制返回多少个相似样本（绝对数量）</li>
+                      <li><strong>相似度阈值</strong>：过滤低质量样本（余弦相似度 0-1）</li>
+                      <li>实际返回数量 = min(满足阈值的样本数, 最大检索样本数)</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* LLM 配置标签页 */}
+              {configTab === 'llm' && (
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">LLM 模型配置</h3>
+
+                  {/* 模型选择 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-3">选择模型</label>
+                    {loadingModels ? (
+                      <p className="text-sm text-gray-500 italic">加载模型列表中...</p>
+                    ) : availableModels.length > 0 ? (
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        {availableModels.map((model) => (
+                          <div
+                            key={model.id}
+                            onClick={() => setEditingConfig({
+                              ...editingConfig,
+                              model_name: model.id,
+                              model_provider: model.provider,
+                              temperature: model.default_temperature,
+                            })}
+                            className={`border-2 rounded-lg p-3 cursor-pointer transition-all ${
+                              editingConfig.model_name === model.id
+                                ? 'border-blue-500 bg-blue-50'
+                                : 'border-gray-200 hover:border-gray-300 bg-white'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="radio"
+                                  checked={editingConfig.model_name === model.id}
+                                  onChange={() => {}}
+                                  className="w-4 h-4 text-blue-600"
+                                />
+                                <div>
+                                  <h4 className="font-semibold text-gray-900 text-sm">{model.name}</h4>
+                                  <p className="text-xs text-gray-600 mt-0.5">{model.description}</p>
+                                  <p className="text-xs text-gray-500 mt-0.5">
+                                    提供商: {model.provider} | 模型: {model.model}
+                                  </p>
+                                </div>
+                              </div>
+                              {editingConfig.model_name === model.id && (
+                                <span className="text-blue-600 font-medium text-xs">✓ 已选择</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500 italic">暂无可用模型</p>
+                    )}
+                  </div>
+
+                  {/* 温度 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      温度 (Temperature)
+                      <span className="text-xs text-gray-500 ml-2">范围: 0-2</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={2}
+                      step={0.1}
+                      value={editingConfig.temperature ?? ''}
+                      onChange={(e) => setEditingConfig({ ...editingConfig, temperature: parseFloat(e.target.value) || 0 })}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      控制输出的随机性。0 = 完全确定性，1-2 = 更有创造性
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* 高级配置标签页 */}
+              {configTab === 'advanced' && (
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">高级配置</h3>
+
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <p className="text-sm text-yellow-800">
+                      ⚠️ <strong>注意：</strong>以下配置项暂不支持在批量重新预测中修改。
+                    </p>
+                  </div>
+
+                  {/* 元素列（只读） */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      元素组成列 <span className="text-xs text-gray-500">(只读)</span>
+                    </label>
+                    <div className="w-full border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-600">
+                      {Array.isArray(editingConfig.composition_column)
+                        ? editingConfig.composition_column.join(', ')
+                        : editingConfig.composition_column || '未设置'}
+                    </div>
+                  </div>
+
+                  {/* 工艺列（只读） */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      工艺参数列 <span className="text-xs text-gray-500">(只读)</span>
+                    </label>
+                    <div className="w-full border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-600">
+                      {Array.isArray(editingConfig.processing_column)
+                        ? editingConfig.processing_column.join(', ') || '未设置'
+                        : editingConfig.processing_column || '未设置'}
+                    </div>
+                  </div>
+
+                  {/* 目标列（只读） */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      目标属性列 <span className="text-xs text-gray-500">(只读)</span>
+                    </label>
+                    <div className="w-full border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-600">
+                      {Array.isArray(editingConfig.target_columns)
+                        ? editingConfig.target_columns.join(', ')
+                        : '未设置'}
+                    </div>
+                  </div>
+
+                  {/* 特征列（只读） */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      特征列 <span className="text-xs text-gray-500">(只读)</span>
+                    </label>
+                    <div className="w-full border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-600">
+                      {Array.isArray(editingConfig.feature_columns) && editingConfig.feature_columns.length > 0
+                        ? editingConfig.feature_columns.join(', ')
+                        : '未设置'}
+                    </div>
+                  </div>
+
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-sm text-blue-800">
+                      💡 <strong>提示：</strong>如需修改元素列、工艺列、目标列或特征列，请在新建预测页面重新创建任务。
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 对话框底部按钮 */}
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-500">
+                {applyToAll && (
+                  <span className="text-blue-600 font-medium">
+                    ✓ 将应用到所有 {batchRerunTasks.length} 个任务
+                  </span>
+                )}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowConfigEditDialog(false);
+                    setEditingTaskId(null);
+                    setEditingConfig(null);
+                    setApplyToAll(false);
+                    setConfigTab('basic');
+                  }}
+                  className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleSaveConfig}
+                  className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  {applyToAll ? '应用到所有任务' : '保存'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 批量停止确认对话框 */}
+      {showBatchCancelDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900">确认批量停止</h2>
+            </div>
+
+            <div className="p-6">
+              <div className="mb-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                <p className="text-sm text-orange-800">
+                  <strong>警告：</strong>即将停止以下 {batchCancelTasks.length} 个任务。
+                  停止后的任务状态将变为"已取消"。
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-gray-700">将要停止的任务：</p>
+                <div className="max-h-60 overflow-y-auto border border-gray-200 rounded p-3 bg-gray-50">
+                  {batchCancelTasks.map((task, index) => (
+                    <div key={task.task_id} className="text-sm py-1">
+                      <span className="text-gray-600">{index + 1}. </span>
+                      <span className="font-mono text-xs text-gray-700">{task.task_id}</span>
+                      <span className="ml-2 text-gray-500">({task.status})</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowBatchCancelDialog(false)}
+                disabled={batchCancelLoading}
+                className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmBatchCancel}
+                disabled={batchCancelLoading}
+                className="px-6 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {batchCancelLoading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <span>停止中...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    <span>确认停止 {batchCancelTasks.length} 个任务</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

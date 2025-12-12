@@ -16,12 +16,18 @@ from pathlib import Path
 LOG_DIR = Path(__file__).parent.parent / "Logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+# 设置标准输出为 UTF-8 编码（Windows 兼容）
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 # 配置根日志记录器
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        # 控制台处理器
+        # 控制台处理器 - 使用 UTF-8 编码
         logging.StreamHandler(sys.stdout),
         # 文件处理器 - 使用 UTF-8 编码
         logging.FileHandler(

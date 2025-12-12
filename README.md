@@ -333,38 +333,39 @@ ONEAPI_API_KEY=your-oneapi-key
 ```
 
 **注意**：
-- 环境变量配置优先级高于 `backend/config/llm_models.json` 中的硬编码配置
-- 建议使用环境变量以避免 API 密钥泄露
+- 所有 API 密钥和 URL 都从 `.env` 文件中读取
+- 不要在配置文件中硬编码任何敏感信息
 - `.env` 文件已在 `.gitignore` 中，不会被提交到版本控制
 
 ### LLM 模型配置
 
-编辑 `backend/config/llm_models.json` 可以添加或修改可用的 LLM 模型：
+LLM 模型配置现在使用 Python 模块 `backend/config/llm_models.py`，该模块会自动从 `.env` 文件读取环境变量。
 
-```json
+如需添加新模型，编辑 `backend/config/llm_models.py`：
+
+```python
 {
-  "models": [
-    {
-      "id": "deepseek-chat",
-      "name": "DeepSeek Chat",
-      "provider": "deepseek",
-      "api_key": "${DEEPSEEK_API_KEY}",
-      "base_url": "${DEEPSEEK_BASE_URL}",
-      "model": "openai/deepseek-chat",
-      "description": "DeepSeek 对话模型，性价比高",
-      "temperature_range": [0.0, 2.0],
-      "default_temperature": 0.0,
-      "enabled": true
-    }
-  ],
-  "default_model": "deepseek-chat"
+    "id": "your-model-id",
+    "name": "Your Model Name",
+    "provider": "your-provider",
+    "api_key": os.getenv("YOUR_API_KEY", ""),
+    "base_url": os.getenv("YOUR_BASE_URL", ""),
+    "model": "openai/your-model-name",
+    "description": "模型描述",
+    "temperature_range": [0.0, 2.0],
+    "default_temperature": 0.0,
+    "enabled": True
 }
 ```
 
 **配置说明**：
-- `${VARIABLE_NAME}` 格式会自动从环境变量读取
-- `api_key` 和 `base_url` 支持环境变量替换
-- `enabled: false` 可以禁用某个模型
+- `id`: 模型的唯一标识符
+- `provider`: 模型提供商（如 gemini, deepseek, openai）
+- `model`: 实际调用的模型名称（格式：`provider/model-name`）
+- `temperature_range`: 允许的温度参数范围
+- `default_temperature`: 默认温度参数
+- `enabled`: 是否启用该模型
+- API 密钥和 URL 会自动从 `.env` 文件中读取对应的环境变量
 
 ---
 
