@@ -63,8 +63,38 @@ DB_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DB_DIR / "app.db"
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
 
-# 创建引擎
-engine = create_engine(DATABASE_URL, echo=False, connect_args={"check_same_thread": False})
+# 创建引擎（添加 SQLite 优化配置）
+# pool_pre_ping: 确保连接有效
+# pool_size: 连接池大小
+# max_overflow: 最大溢出连接数
+# connect_args: SQLite 特定参数
+#   - check_same_thread: 允许多线程访问
+#   - timeout: 数据库锁定时的等待时间（秒）
+engine = create_engine(
+    DATABASE_URL, 
+    echo=False, 
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+    connect_args={
+        "check_same_thread": False,
+        "timeout": 30  # 30秒超时，防止长时间锁定
+    }
+)
+
+# 配置 WAL 模式以改善并发性能（仅对 SQLite 有效）
+if "sqlite" in DATABASE_URL.lower():
+    from sqlalchemy import event
+    
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        # 启用 WAL 模式：允许并发读写
+        cursor.execute("PRAGMA journal_mode=WAL")
+        # 设置忙碌超时
+        cursor.execute("PRAGMA busy_timeout=30000")  # 30秒
+        cursor.close()
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

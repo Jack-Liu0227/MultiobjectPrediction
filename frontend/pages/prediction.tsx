@@ -63,6 +63,7 @@ export default function PredictionPage() {
   const [activeTab, setActiveTab] = useState<ConfigTab>('elements');
   const [taskNote, setTaskNote] = useState('');
   const [continueFromTaskId, setContinueFromTaskId] = useState<string | null>(null);
+  const [incrementalTaskId, setIncrementalTaskId] = useState<string | null>(null); // 增量预测任务ID
 
   // 预测配置
   const [settings, setSettings] = useState<PredictionSettings>({
@@ -248,10 +249,15 @@ export default function PredictionPage() {
     loadAvailableDatasets();
     loadAvailableModels();
 
-    // 检查 URL 参数是否有 dataset_id 或 rerun_task_id
-    const { dataset_id, rerun_task_id, continue: continueFlag } = router.query;
+    // 检查 URL 参数是否有 dataset_id 或 rerun_task_id 或 incremental_task_id
+    const { dataset_id, rerun_task_id, incremental_task_id, continue: continueFlag } = router.query;
 
-    if (rerun_task_id && typeof rerun_task_id === 'string') {
+    if (incremental_task_id && typeof incremental_task_id === 'string') {
+      // 增量预测模式：加载任务配置，并标记为增量模式
+      setIncrementalTaskId(incremental_task_id);
+      loadTaskConfig(incremental_task_id, false); // 加载配置但不设置 continueFromTaskId (因为我们有专门的 incrementalTaskId)
+      alert('已进入增量预测模式。您可以修改配置（如增加迭代次数），然后点击"开始增量预测"继续原任务。');
+    } else if (rerun_task_id && typeof rerun_task_id === 'string') {
       // 重新运行任务或继续预测：加载任务配置
       const isContinue = continueFlag === 'true';
       loadTaskConfig(rerun_task_id, isContinue);
@@ -369,6 +375,52 @@ export default function PredictionPage() {
       setError(null);
       setIsRunning(true);
 
+      // 如果是增量预测模式，调用增量预测接口
+      if (incrementalTaskId) {
+        const requestBody = {
+          config: {
+            // 只发送可能被修改的配置
+            max_iterations: settings.maxIterations,
+            sample_size: settings.sampleSize,
+            workers: settings.workers,
+            max_workers: settings.maxWorkers,
+            convergence_threshold: settings.convergenceThreshold,
+            early_stop: settings.earlyStop,
+            // 其他配置也可以发送，但通常增量预测主要关注迭代参数
+            composition_column: settings.compositionColumns,
+            processing_column: settings.processingColumn,
+            target_columns: settings.targetColumns,
+            feature_columns: settings.featureColumns.length > 0 ? settings.featureColumns : undefined,
+            train_ratio: settings.trainRatio,
+            random_seed: settings.randomSeed,
+            max_retrieved_samples: settings.maxRetrievedSamples,
+            similarity_threshold: settings.similarityThreshold,
+            model_provider: settings.modelProvider,
+            model_name: settings.modelName,
+            temperature: settings.temperature,
+            prompt_template: settings.promptTemplate,
+            enable_iteration: settings.enableIteration,
+          }
+        };
+
+        const response = await fetch(`http://localhost:8000/api/tasks/${incrementalTaskId}/incremental-predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.detail || '启动增量预测失败');
+        }
+
+        // 增量预测不返回新的 task_id，而是继续使用原 ID
+        setTaskId(incrementalTaskId);
+        pollTaskStatus(incrementalTaskId);
+        return;
+      }
+
+      // 常规预测流程
       // 根据是否启用迭代预测选择不同的API端点
       const apiEndpoint = settings.enableIteration ? '/api/iterative-prediction/start' : '/api/prediction/start';
 
@@ -555,6 +607,7 @@ export default function PredictionPage() {
                 onClick={() => {
                   // 清空所有配置状态，重置为默认值
                   setContinueFromTaskId(null);
+                  setIncrementalTaskId(null);
                   setUploadedFile(null);
                   setAllColumns([]);
                   setUseExistingDataset(false);
@@ -628,10 +681,9 @@ export default function PredictionPage() {
 
               <div className="space-y-4">
                 {/* 选项1：上传新文件 */}
-                <div className={`border-2 rounded-lg p-4 cursor-pointer transition-colors ${
-                  !useExistingDataset ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
-                }`}
-                onClick={() => setUseExistingDataset(false)}
+                <div className={`border-2 rounded-lg p-4 cursor-pointer transition-colors ${!useExistingDataset ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                  onClick={() => setUseExistingDataset(false)}
                 >
                   <div className="flex items-center gap-3">
                     <input
@@ -648,10 +700,9 @@ export default function PredictionPage() {
                 </div>
 
                 {/* 选项2：使用已有数据集 */}
-                <div className={`border-2 rounded-lg p-4 cursor-pointer transition-colors ${
-                  useExistingDataset ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
-                }`}
-                onClick={() => setUseExistingDataset(true)}
+                <div className={`border-2 rounded-lg p-4 cursor-pointer transition-colors ${useExistingDataset ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                  onClick={() => setUseExistingDataset(true)}
                 >
                   <div className="flex items-center gap-3">
                     <input
@@ -743,11 +794,10 @@ export default function PredictionPage() {
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
-                      className={`flex-1 py-4 px-4 text-center text-sm font-medium transition-colors ${
-                        activeTab === tab.id
+                      className={`flex-1 py-4 px-4 text-center text-sm font-medium transition-colors ${activeTab === tab.id
                           ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600'
                           : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                      }`}
+                        }`}
                     >
                       {tab.label}
                     </button>
@@ -789,13 +839,12 @@ export default function PredictionPage() {
               <button
                 onClick={handleStartPrediction}
                 disabled={!isConfigValid() || isRunning}
-                className={`px-6 py-3 rounded-lg font-medium ${
-                  isConfigValid() && !isRunning
+                className={`px-6 py-3 rounded-lg font-medium ${isConfigValid() && !isRunning
                     ? 'bg-blue-600 text-white hover:bg-blue-700'
                     : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                }`}
+                  }`}
               >
-                {isRunning ? '⏳ 预测中...' : '🚀 开始预测'}
+                {isRunning ? '⏳ 预测中...' : (incrementalTaskId ? '🚀 开始增量预测' : '🚀 开始预测')}
               </button>
             </div>
           </div>
@@ -1109,13 +1158,13 @@ export default function PredictionPage() {
                       retrievalRatioInput !== ''
                         ? retrievalRatioInput
                         : (() => {
-                            const datasetRowCount = uploadedFile?.row_count || 0;
-                            const trainRatio = settings.trainRatio;
-                            const trainCount = Math.floor(datasetRowCount * trainRatio);
-                            return trainCount > 0
-                              ? ((settings.maxRetrievedSamples || 0) / trainCount).toFixed(3)
-                              : '';
-                          })()
+                          const datasetRowCount = uploadedFile?.row_count || 0;
+                          const trainRatio = settings.trainRatio;
+                          const trainCount = Math.floor(datasetRowCount * trainRatio);
+                          return trainCount > 0
+                            ? ((settings.maxRetrievedSamples || 0) / trainCount).toFixed(3)
+                            : '';
+                        })()
                     }
                     onChange={(e) => {
                       const value = e.target.value;
@@ -1214,11 +1263,10 @@ export default function PredictionPage() {
               <button
                 onClick={() => setShowRAGPreview(true)}
                 disabled={!isConfigValid()}
-                className={`px-6 py-3 rounded-lg font-medium flex items-center gap-2 ${
-                  isConfigValid()
+                className={`px-6 py-3 rounded-lg font-medium flex items-center gap-2 ${isConfigValid()
                     ? 'bg-purple-600 text-white hover:bg-purple-700'
                     : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                }`}
+                  }`}
               >
                 <span>🔍</span>
                 <span>预览 RAG 检索效果</span>
@@ -1251,18 +1299,17 @@ export default function PredictionPage() {
                       modelProvider: model.provider,
                       temperature: model.default_temperature,
                     }))}
-                    className={`border-2 rounded-lg p-4 cursor-pointer transition-all ${
-                      settings.modelName === model.id
+                    className={`border-2 rounded-lg p-4 cursor-pointer transition-all ${settings.modelName === model.id
                         ? 'border-blue-500 bg-blue-50'
                         : 'border-gray-200 hover:border-gray-300 bg-white'
-                    }`}
+                      }`}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <input
                           type="radio"
                           checked={settings.modelName === model.id}
-                          onChange={() => {}}
+                          onChange={() => { }}
                           className="w-4 h-4 text-blue-600"
                         />
                         <div>

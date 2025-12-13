@@ -12,6 +12,9 @@ from models.schemas import TaskListResponse, TaskDetailResponse, TaskInfo, Predi
 from services.task_manager import TaskManager
 from services.rag_prediction_service import RAGPredictionService
 from database.dataset_db import DatasetDatabase
+from database.task_db import TaskDatabase
+from services.iterative_prediction_service import IterativePredictionService
+from services.simple_rag_engine import SimpleRAGEngine
 from config import UPLOAD_DIR, BASE_DIR, RESULTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -27,6 +30,12 @@ class RerunTaskRequest(BaseModel):
     """重新运行任务请求"""
     config: Optional[dict] = None  # 可选的配置覆盖
     note: Optional[str] = None  # 可选的任务备注
+
+
+class IncrementalPredictRequest(BaseModel):
+    """增量预测请求"""
+    config: Optional[dict] = None  # 可选的配置覆盖（例如增加 max_iterations）
+
 
 
 @router.get("/list", response_model=TaskListResponse)
@@ -312,12 +321,17 @@ async def rerun_task(
 
 
 @router.post("/{task_id}/incremental-predict")
-async def incremental_predict_task(task_id: str, background_tasks: BackgroundTasks):
+async def incremental_predict_task(
+    task_id: str, 
+    background_tasks: BackgroundTasks,
+    request: Optional[IncrementalPredictRequest] = None
+):
     """
     增量预测任务（继续预测未完成的样本）
 
     参数:
     - task_id: 原任务ID
+    - request: 可选的配置覆盖
 
     返回:
     {
@@ -331,11 +345,24 @@ async def incremental_predict_task(task_id: str, background_tasks: BackgroundTas
         from config import RESULTS_DIR
         import json
 
+        logger.info(f"Received incremental predict request for task: {task_id}")
+
         # 获取原任务信息
         original_task = task_manager.get_task(task_id)
 
         if not original_task:
+            logger.error(f"Task not found: {task_id}")
+            # 尝试列出目录下的文件以辅助调试
+            try:
+                import os
+                tasks_dir = task_manager.storage_dir
+                files = os.listdir(tasks_dir)
+                logger.info(f"Available task files: {files}")
+            except:
+                pass
             raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+        
+        logger.info(f"Found original task: {original_task.get('task_id')}")
 
         # 获取原任务配置
         config_dict = task_manager.get_task_config(task_id)
@@ -343,63 +370,122 @@ async def incremental_predict_task(task_id: str, background_tasks: BackgroundTas
         if not config_dict:
             raise HTTPException(status_code=400, detail="无法获取任务配置")
 
+        # 如果请求中包含配置覆盖，合并配置
+        if request and request.config:
+            logger.info(f"应用增量预测配置覆盖: {request.config}")
+            config_dict.update(request.config)
+
         # 添加增量预测标志
         config_dict['continue_from_task_id'] = task_id
 
-        # 创建配置对象
-        config = PredictionConfig(**config_dict)
+        # 创建配置对象（添加详细的错误处理）
+        try:
+            logger.info(f"尝试创建 PredictionConfig，配置字典keys: {list(config_dict.keys())}")
+            config = PredictionConfig(**config_dict)
+            logger.info(f"PredictionConfig 创建成功")
+        except Exception as e:
+            logger.error(f"创建 PredictionConfig 失败: {e}", exc_info=True)
+            logger.error(f"配置字典内容: {config_dict}")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"配置验证失败: {str(e)}"
+            )
 
         # 获取文件路径
         actual_file_path = None
+        
+        # 打印完整的任务结构以便调试
+        logger.info(f"开始查找任务 {task_id} 的数据文件")
+        logger.info(f"original_task 顶层 keys: {list(original_task.keys())}")
+        
+        # 尝试从多个可能的位置获取 dataset_id 和 file_id
         request_data = original_task.get("request_data", {})
-        dataset_id = request_data.get("dataset_id")
-        file_id = request_data.get("file_id")
+        
+        # 如果 request_data 为空，尝试从顶层获取
+        if not request_data:
+            logger.warning("request_data 为空，尝试从顶层获取 file_id 和 dataset_id")
+            dataset_id = original_task.get("dataset_id") or original_task.get("file_id")
+            file_id = original_task.get("file_id")
+        else:
+            dataset_id = request_data.get("dataset_id")
+            file_id = request_data.get("file_id")
+        
+        logger.info(f"request_data keys: {list(request_data.keys())}")
+        logger.info(f"dataset_id: {dataset_id}, file_id: {file_id}")
 
         # 方法1: 从 task_config.json 获取（适用于旧任务）
         task_config_file = RESULTS_DIR / task_id / "task_config.json"
+        logger.info(f"方法1: 检查 task_config.json: {task_config_file}")
         if task_config_file.exists():
             try:
                 with open(task_config_file, 'r', encoding='utf-8') as f:
                     task_config = json.load(f)
                     file_path_str = task_config.get('request_data', {}).get('file_path')
+                    logger.info(f"task_config.json 中的 file_path: {file_path_str}")
                     if file_path_str:
                         actual_file_path = Path(file_path_str)
                         if actual_file_path.exists():
-                            logger.info(f"从 task_config.json 获取文件路径: {actual_file_path}")
+                            logger.info(f"✓ 从 task_config.json 获取文件路径: {actual_file_path}")
+                        else:
+                            logger.warning(f"✗ task_config.json 中的路径不存在: {actual_file_path}")
+                            actual_file_path = None
             except Exception as e:
                 logger.warning(f"无法从 task_config.json 读取文件路径: {e}")
+        else:
+            logger.warning(f"task_config.json 不存在")
 
         # 方法2: 从 dataset_id 获取
         if not actual_file_path or not actual_file_path.exists():
+            logger.info(f"方法2: 尝试从 dataset_id 获取")
             if dataset_id:
                 dataset = dataset_db.get_dataset(dataset_id)
                 if dataset:
+                    logger.info(f"找到数据集: {dataset.get('dataset_id')}, file_path: {dataset.get('file_path')}")
                     actual_file_path = Path(dataset['file_path'])
                     if actual_file_path.exists():
-                        logger.info(f"从数据集数据库获取文件路径: {actual_file_path}")
+                        logger.info(f"✓ 从数据集数据库获取文件路径: {actual_file_path}")
+                    else:
+                        logger.warning(f"✗ 数据集文件不存在: {actual_file_path}")
+                        actual_file_path = None
+                else:
+                    logger.warning(f"未找到 dataset_id: {dataset_id}")
 
         # 方法3: 从 file_id 获取
         if not actual_file_path or not actual_file_path.exists():
+            logger.info(f"方法3: 尝试从 file_id 获取")
             if file_id:
                 # 尝试从数据集数据库获取文件路径
                 dataset = dataset_db.get_dataset(file_id)
                 if dataset:
+                    logger.info(f"找到数据集 (通过file_id): {dataset.get('dataset_id')}")
                     actual_file_path = Path(dataset['file_path'])
                     if actual_file_path.exists():
-                        logger.info(f"从数据集数据库获取文件路径: {actual_file_path}")
+                        logger.info(f"✓ 从数据集数据库获取文件路径: {actual_file_path}")
+                    else:
+                        logger.warning(f"✗ 数据集文件不存在: {actual_file_path}")
+                        actual_file_path = None
                 else:
                     # 尝试从上传目录获取文件
+                    logger.info(f"尝试从上传目录获取: {UPLOAD_DIR / file_id}")
                     file_path = UPLOAD_DIR / file_id
                     if file_path.exists():
                         # 查找实际的CSV文件
                         csv_files = list(file_path.glob("*.csv"))
+                        logger.info(f"上传目录中找到 {len(csv_files)} 个 CSV 文件")
                         if csv_files:
                             actual_file_path = csv_files[0]
-                            logger.info(f"从上传目录获取文件路径: {actual_file_path}")
+                            logger.info(f"✓ 从上传目录获取文件路径: {actual_file_path}")
+                    else:
+                        logger.warning(f"上传目录不存在: {file_path}")
 
         # 检查是否成功获取文件路径
         if not actual_file_path or not actual_file_path.exists():
+            logger.error(f"所有方法都失败了，无法找到数据文件")
+            logger.error(f"最终 actual_file_path: {actual_file_path}")
             raise HTTPException(status_code=404, detail=f"无法找到任务 {task_id} 的数据文件")
+        
+        logger.info(f"✓✓✓ 成功找到数据文件: {actual_file_path}")
+
 
         # 重置任务状态为运行中
         task_manager.update_task_status(
@@ -410,12 +496,38 @@ async def incremental_predict_task(task_id: str, background_tasks: BackgroundTas
         )
 
         # 🔥 修复：使用 BackgroundTasks 启动增量预测（与 rerun_task 保持一致）
-        background_tasks.add_task(
-            prediction_service.run_prediction,
-            task_id=task_id,
-            file_path=str(actual_file_path),
-            config=config
-        )
+        if config.enable_iteration:
+            logger.info(f"Task {task_id}: Detected iterative prediction task, using IterativePredictionService")
+            
+            def _run_iterative_wrapper(tid, fpath, cfg):
+                try:
+                    # 初始化服务
+                    tm = TaskManager()
+                    tdb = TaskDatabase()
+                    rag = SimpleRAGEngine(
+                        max_retrieved_samples=cfg.max_retrieved_samples,
+                        similarity_threshold=cfg.similarity_threshold
+                    )
+                    service = IterativePredictionService(tm, tdb, rag)
+                    service.run_task(tid, Path(fpath), cfg)
+                except Exception as e:
+                    logger.error(f"Iterative wrapper failed: {e}", exc_info=True)
+                    tm = TaskManager()
+                    tm.update_task(tid, {"status": "failed", "error": str(e)})
+
+            background_tasks.add_task(
+                _run_iterative_wrapper,
+                tid=task_id,
+                fpath=str(actual_file_path),
+                cfg=config
+            )
+        else:
+            background_tasks.add_task(
+                prediction_service.run_prediction,
+                task_id=task_id,
+                file_path=str(actual_file_path),
+                config=config
+            )
 
         logger.info(f"Started background incremental prediction for task: {task_id}")
 

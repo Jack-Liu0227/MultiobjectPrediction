@@ -159,197 +159,29 @@ def _run_iterative_prediction_task(task_id: str, file_path: Path, config):
         config: 预测配置
     """
     try:
-        logger.info(f"Task {task_id}: Starting iterative prediction")
-
-        # 更新任务状态
-        task_manager.update_task(
-            task_id,
-            {
-                "status": "running",
-                "progress": 0.0,
-                "message": "正在加载数据..."
-            }
-        )
-
-        # 1. 加载数据
-        df = pd.read_csv(file_path)
-        logger.info(f"Task {task_id}: Loaded {len(df)} samples")
-
-        # 2. 识别组分列
-        composition_columns = []
-        for col in df.columns:
-            if any(unit in col.lower() for unit in ['wt%', 'at%']):
-                composition_columns.append(col)
-
-        if not composition_columns:
-            raise ValueError("未找到组分列（应包含 wt% 或 at%）")
-
-        logger.info(f"Task {task_id}: Found {len(composition_columns)} composition columns")
-
-        # 3. 数据集划分
-        from sklearn.model_selection import train_test_split
-
-        train_df, test_df = train_test_split(
-            df,
-            train_size=config.train_ratio,
-            random_state=config.random_seed or 42
-        )
-
-        logger.info(
-            f"Task {task_id}: Split data into {len(train_df)} train and {len(test_df)} test samples"
-        )
-
-        # 4. 构建样本文本和嵌入
-        from services.sample_text_builder import SampleTextBuilder
-
-        def format_composition(row, comp_cols):
-            """格式化组分"""
-            comp_parts = []
-            for col in comp_cols:
-                value = row[col]
-                element = col.split('(')[0].strip()
-                if value > 0:
-                    comp_parts.append(f"{element} {value}")
-            return ", ".join(comp_parts)
-
-        # 构建训练样本文本
-        train_texts = []
-        train_data = []
-
-        for idx, row in train_df.iterrows():
-            composition_str = format_composition(row, composition_columns)
-
-            # 提取工艺列
-            processing_dict = {}
-            if config.processing_column:
-                for proc_col in config.processing_column:
-                    if proc_col in row.index and pd.notna(row[proc_col]):
-                        processing_dict[proc_col] = row[proc_col]
-
-            # 提取特征列
-            feature_dict = {}
-            if config.feature_columns:
-                for feat_col in config.feature_columns:
-                    if feat_col in row.index and pd.notna(row[feat_col]):
-                        feature_dict[feat_col] = row[feat_col]
-
-            # 构建样本文本
-            sample_text = SampleTextBuilder.build_sample_text(
-                composition=composition_str,
-                processing_columns=processing_dict if processing_dict else None,
-                feature_columns=feature_dict if feature_dict else None
-            )
-
-            train_texts.append(sample_text)
-
-            # 保存样本数据
-            sample_data = {
-                "composition": composition_str,
-                "sample_text": sample_text
-            }
-
-            # 添加工艺列
-            if processing_dict:
-                sample_data.update(processing_dict)
-
-            # 添加特征列
-            if feature_dict:
-                sample_data.update(feature_dict)
-
-            # 添加目标属性
-            for target_col in config.target_columns:
-                if target_col in row.index and pd.notna(row[target_col]):
-                    sample_data[target_col] = float(row[target_col])
-
-            train_data.append(sample_data)
-
-        # 构建测试样本数据（保留所有原始列，确保 CSV 格式完整）
-        test_data = []
-        for idx, row in test_df.iterrows():
-            composition_str = format_composition(row, composition_columns)
-
-            # 提取工艺列
-            processing_dict = {}
-            if config.processing_column:
-                for proc_col in config.processing_column:
-                    if proc_col in row.index and pd.notna(row[proc_col]):
-                        processing_dict[proc_col] = row[proc_col]
-
-            # 提取特征列
-            feature_dict = {}
-            if config.feature_columns:
-                for feat_col in config.feature_columns:
-                    if feat_col in row.index and pd.notna(row[feat_col]):
-                        feature_dict[feat_col] = row[feat_col]
-
-            # 构建样本文本
-            sample_text = SampleTextBuilder.build_sample_text(
-                composition=composition_str,
-                processing_columns=processing_dict if processing_dict else None,
-                feature_columns=feature_dict if feature_dict else None
-            )
-
-            # 保存样本数据（保留所有原始列）
-            sample_data = row.to_dict()  # 保留所有原始列
-            sample_data["composition"] = composition_str  # 添加格式化的 composition 字符串
-            sample_data["sample_text"] = sample_text  # 添加样本文本
-
-            test_data.append(sample_data)
-
-        # 5. 生成嵌入
+        # 初始化 RAG 引擎
         rag_engine = SimpleRAGEngine(
             max_retrieved_samples=config.max_retrieved_samples,
             similarity_threshold=config.similarity_threshold
         )
 
-        train_embeddings = rag_engine.create_embeddings(train_texts)
-
-        logger.info(f"Task {task_id}: Generated embeddings for {len(train_texts)} training samples")
-
-        # 6. 运行迭代预测
+        # 初始化迭代预测服务
         iterative_service = IterativePredictionService(
             task_manager=task_manager,
             task_db=task_db,
             rag_engine=rag_engine
         )
 
-        result = iterative_service.run_iterative_prediction(
+        # 执行任务
+        iterative_service.run_task(
             task_id=task_id,
-            config=config,
-            train_data=train_data,
-            test_data=test_data,
-            train_embeddings=train_embeddings
+            file_path=file_path,
+            config=config
         )
 
-        if result["success"]:
-            # 更新任务状态为完成
-            task_manager.update_task(
-                task_id,
-                {
-                    "status": "completed",
-                    "progress": 1.0,
-                    "message": f"迭代预测完成，共{result['total_iterations']}轮，"
-                               f"收敛{result['converged_samples']}个样本，"
-                               f"失败{result['failed_samples']}个样本"
-                }
-            )
-
-            logger.info(f"Task {task_id}: Iterative prediction completed successfully")
-        else:
-            # 更新任务状态为失败
-            task_manager.update_task(
-                task_id,
-                {
-                    "status": "failed",
-                    "error": result.get("error", "未知错误")
-                }
-            )
-
-            logger.error(f"Task {task_id}: Iterative prediction failed: {result.get('error')}")
-
     except Exception as e:
-        logger.error(f"Task {task_id}: Iterative prediction failed: {e}", exc_info=True)
-
+        logger.error(f"Task {task_id}: Iterative prediction task wrapper failed: {e}", exc_info=True)
+        
         # 更新任务状态为失败
         task_manager.update_task(
             task_id,

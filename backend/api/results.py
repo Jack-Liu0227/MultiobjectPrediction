@@ -80,7 +80,13 @@ async def get_results(
             # 转换为 PredictionMetrics 格式
             metrics = {}
             for target, metric_values in metrics_data.items():
-                metrics[target] = PredictionMetrics(**metric_values)
+                # 过滤掉非字典类型的元数据（如 current_iteration, max_iterations 等）
+                if isinstance(metric_values, dict):
+                    try:
+                        metrics[target] = PredictionMetrics(**metric_values)
+                    except Exception as e:
+                        logger.warning(f"无法解析指标 {target}: {e}")
+                        continue
         else:
             metrics = {}
 
@@ -246,6 +252,26 @@ async def get_pareto_analysis(result_id: str):
 
         # 识别目标列（以 _predicted 结尾的列）
         predicted_cols = [col for col in df.columns if col.endswith('_predicted')]
+
+        if len(predicted_cols) < 2:
+            # 尝试查找迭代预测列
+            # 格式: {target}_predicted_Iteration_{iter}
+            # 我们需要找到每个目标的最后一轮迭代
+            import re
+            iter_pattern = re.compile(r'(.+)_predicted_Iteration_(\d+)$')
+            
+            target_max_iter = {} # {target: max_iter}
+            
+            for col in df.columns:
+                match = iter_pattern.match(col)
+                if match:
+                    target = match.group(1)
+                    iter_num = int(match.group(2))
+                    if target not in target_max_iter or iter_num > target_max_iter[target]:
+                        target_max_iter[target] = iter_num
+            
+            if target_max_iter:
+                predicted_cols = [f"{target}_predicted_Iteration_{iter_num}" for target, iter_num in target_max_iter.items()]
 
         if len(predicted_cols) < 2:
             raise HTTPException(

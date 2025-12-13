@@ -52,15 +52,7 @@ const PredictionScatterChart = dynamic(
 );
 
 // 预加载图表组件（在页面加载后预先下载 JS）
-const preloadCharts = () => {
-  // 延迟预加载，不阻塞主要内容
-  setTimeout(() => {
-    import('@/components/charts/ParetoFrontChart');
-    import('@/components/charts/PredictionComparisonChart');
-    import('@/components/charts/ErrorDistributionChart');
-    import('@/components/charts/PredictionScatterChart');
-  }, 1000);
-};
+
 
 export default function ResultsPage() {
   const router = useRouter();
@@ -74,6 +66,7 @@ export default function ResultsPage() {
   const [selectedTarget, setSelectedTarget] = useState<string>('');
   const [selectedPoint, setSelectedPoint] = useState<any>(null);
   const [showTraceModal, setShowTraceModal] = useState(false);
+  const [showTrajectory, setShowTrajectory] = useState(false); // 迭代轨迹开关
   const [taskStatus, setTaskStatus] = useState<any>(null);
   const [isPolling, setIsPolling] = useState(false);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -242,38 +235,84 @@ export default function ResultsPage() {
       }
       const processDetails = await processDetailsResponse.json();
 
-      // 从 process_details 构建预测结果数据
-      const predictions = processDetails.map((detail: any) => {
-        const row: any = {
-          sample_index: detail.sample_index,
-          ID: detail.ID,
-          predicted_at: detail.predicted_at || null,
-          confidence: detail.confidence || null, // 添加 confidence 字段
-        };
-        // 添加真实值和预测值
-        if (detail.true_values) {
-          Object.entries(detail.true_values).forEach(([key, value]) => {
-            row[key] = value;
-          });
-        }
-        // 兼容新旧格式：优先使用 final_predictions，如果不存在则使用 predicted_values
-        const predictedValues = detail.final_predictions || detail.predicted_values;
-        if (predictedValues) {
-          Object.entries(predictedValues).forEach(([key, value]) => {
-            row[`${key}_predicted`] = value;
-          });
-        }
-        return row;
-      });
+      // 建立 process_details 索引映射 (sample_index -> detail)
+      const detailsMap = new Map();
+      if (Array.isArray(processDetails)) {
+        processDetails.forEach((detail: any) => {
+          if (detail.sample_index !== undefined) {
+            detailsMap.set(detail.sample_index, detail);
+          }
+        });
+      }
 
-      // 使用 process_details 构建的 predictions 替换原有的
-      resultsData.predictions = predictions;
+      // 合并 CSV 数据 (resultsData.predictions) 和 process_details 数据
+      // 这样可以保留 CSV 中的迭代列 (Iteration_1, Iteration_2...) 同时添加 confidence 等信息
+      let mergedPredictions = [];
+
+      if (resultsData.predictions && resultsData.predictions.length > 0) {
+        mergedPredictions = resultsData.predictions.map((csvRow: any, idx: number) => {
+          // 尝试通过 sample_index 匹配，如果没有则尝试通过索引匹配
+          const sampleIndex = csvRow.sample_index !== undefined ? csvRow.sample_index : idx;
+          const detail = detailsMap.get(sampleIndex);
+
+          if (detail) {
+            const mergedRow = {
+              ...csvRow,
+              // 添加 process_details 中的额外信息
+              confidence: detail.confidence || null,
+              iteration_history: detail.iteration_history || null,
+              predicted_at: detail.predicted_at || csvRow.predicted_at || null,
+              // 确保 ID 存在
+              ID: csvRow.ID !== undefined ? csvRow.ID : detail.ID,
+            };
+
+            // 优先使用 process_details 中的预测值 (响应用户请求)
+            const predictedValues = detail.final_predictions || detail.predicted_values;
+            if (predictedValues) {
+              Object.entries(predictedValues).forEach(([key, value]) => {
+                mergedRow[`${key}_predicted`] = value;
+              });
+            }
+
+            return mergedRow;
+          }
+          return csvRow;
+        });
+      } else {
+        // 如果 CSV 数据为空，回退到使用 process_details 构建
+        mergedPredictions = processDetails.map((detail: any) => {
+          const row: any = {
+            sample_index: detail.sample_index,
+            ID: detail.ID,
+            predicted_at: detail.predicted_at || null,
+            confidence: detail.confidence || null,
+            iteration_history: detail.iteration_history || null,
+          };
+          // 添加真实值
+          if (detail.true_values) {
+            Object.entries(detail.true_values).forEach(([key, value]) => {
+              row[key] = value;
+            });
+          }
+          // 添加预测值
+          const predictedValues = detail.final_predictions || detail.predicted_values;
+          if (predictedValues) {
+            Object.entries(predictedValues).forEach(([key, value]) => {
+              row[`${key}_predicted`] = value;
+            });
+          }
+          return row;
+        });
+      }
+
+      // 更新结果数据
+      resultsData.predictions = mergedPredictions;
       setResults(resultsData);
 
       // 计算按置信度分组的指标
       const targetColumns = Object.keys(resultsData.metrics || {});
-      if (targetColumns.length > 0 && predictions.length > 0) {
-        const groupedMetrics = calculateMetricsByConfidence(predictions, targetColumns);
+      if (targetColumns.length > 0 && mergedPredictions.length > 0) {
+        const groupedMetrics = calculateMetricsByConfidence(mergedPredictions, targetColumns);
         setMetricsByConfidence(groupedMetrics);
       }
 
@@ -284,8 +323,7 @@ export default function ResultsPage() {
 
       setLoading(false);
 
-      // 数据加载完成后，预加载图表组件
-      preloadCharts();
+
     } catch (err: any) {
       // 忽略 AbortError（请求被取消）
       if (err.name === 'AbortError') {
@@ -336,6 +374,29 @@ export default function ResultsPage() {
     }
   };
 
+  const handleDeleteTask = async () => {
+    if (!id) return;
+
+    if (!window.confirm('确定要删除这个任务吗？此操作不可恢复。')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/tasks/${id}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        router.push('/tasks');
+      } else {
+        const data = await response.json();
+        throw new Error(data.detail || '删除失败');
+      }
+    } catch (err: any) {
+      alert('删除任务失败: ' + err.message);
+    }
+  };
+
   // 加载任务配置
   const loadTaskConfig = async () => {
     try {
@@ -361,16 +422,13 @@ export default function ResultsPage() {
     router.push(`/prediction?rerun_task_id=${id}`);
   };
 
-  // 增量预测（跳转到配置页面，让用户确认后继续预测）
+  // 增量预测（跳转到配置页面，允许用户修改迭代次数等参数）
   const handleIncrementalPredict = () => {
-    if (!taskConfig) {
-      alert('无法加载任务配置');
-      return;
-    }
+    if (!id) return;
 
-    // 跳转到预测配置页面，传递任务ID和continue标志
-    // 预测页面会加载配置，并设置 continue_from_task_id（增量预测）
-    router.push(`/prediction?rerun_task_id=${id}&continue=true`);
+    // 跳转到预测配置页面，传递 incremental_task_id 参数
+    // 预测页面将加载原任务配置，并允许用户修改（如增加迭代次数），然后调用 incremental-predict 接口
+    router.push(`/prediction?incremental_task_id=${id}`);
   };
 
   // 编辑配置后重新预测
@@ -381,17 +439,31 @@ export default function ResultsPage() {
     }
 
     // 从 task_config.json 中提取正确的配置数据结构
-    const requestData = taskConfig.request_data;
-    const configForEdit: any = {
-      filename: requestData.filename,
-      config: requestData.config
-    };
+    let configForEdit: any = {};
 
-    // 处理 file_id 或 dataset_id（优先使用 dataset_id）
-    if (requestData.dataset_id) {
-      configForEdit.dataset_id = requestData.dataset_id;
-    } else if (requestData.file_id) {
-      configForEdit.file_id = requestData.file_id;
+    if (taskConfig.request_data) {
+      configForEdit = {
+        filename: taskConfig.request_data.filename,
+        config: taskConfig.request_data.config
+      };
+      // 处理 file_id 或 dataset_id（优先使用 dataset_id）
+      if (taskConfig.request_data.dataset_id) {
+        configForEdit.dataset_id = taskConfig.request_data.dataset_id;
+      } else if (taskConfig.request_data.file_id) {
+        configForEdit.file_id = taskConfig.request_data.file_id;
+      }
+    } else if (taskConfig.config) {
+      // 兼容扁平结构
+      configForEdit = {
+        filename: taskConfig.config.data_path ? taskConfig.config.data_path.split(/[/\\]/).pop() : '',
+        config: taskConfig.config
+      };
+      if (taskConfig.dataset_id) {
+        configForEdit.dataset_id = taskConfig.dataset_id;
+      }
+      if (taskConfig.file_id) {
+        configForEdit.file_id = taskConfig.file_id;
+      }
     }
 
     // 将配置保存到 localStorage，然后跳转到预测页面
@@ -610,103 +682,6 @@ export default function ResultsPage() {
                 <p className="text-gray-600 mt-1">📝 备注: {taskConfig.note}</p>
               )}
 
-              {/* 任务切换器 - 移到标题下方 */}
-              {completedTasks.length > 1 && (
-                <div className="mt-4 flex items-center gap-3 bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-2.5 rounded-lg border border-blue-200 shadow-sm">
-                  <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">切换任务</span>
-
-                  {/* 上一个按钮 */}
-                  <button
-                    onClick={handlePrevTask}
-                    disabled={currentTaskIndex <= 0}
-                    className="flex items-center justify-center w-8 h-8 rounded-md bg-white border border-blue-300 hover:bg-blue-100 hover:border-blue-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:border-blue-300 transition-all shadow-sm"
-                    title="上一个任务"
-                  >
-                    <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                    </svg>
-                  </button>
-
-                  {/* 任务选择下拉菜单 */}
-                  <div className="relative" ref={taskSelectorRef}>
-                    <button
-                      onClick={() => setShowTaskSelector(!showTaskSelector)}
-                      className="flex items-center gap-3 px-4 py-2 bg-white border-2 border-blue-300 hover:border-blue-400 hover:shadow-md rounded-lg transition-all min-w-[240px] group"
-                    >
-                      <div className="flex items-center gap-2 flex-1">
-                        <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                        </svg>
-                        <span className="text-sm font-medium text-gray-700 truncate">
-                          {currentTaskIndex >= 0 ? `第 ${currentTaskIndex + 1} 个任务，共 ${completedTasks.length} 个` : '选择任务'}
-                        </span>
-                      </div>
-                      <svg className={`w-4 h-4 text-blue-600 transition-transform ${showTaskSelector ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-
-                    {showTaskSelector && (
-                      <div className="absolute top-full left-0 mt-2 w-96 max-h-96 overflow-y-auto bg-white border-2 border-blue-200 rounded-xl shadow-2xl z-50">
-                        <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-3 font-semibold text-sm">
-                          选择要查看的任务
-                        </div>
-                        {completedTasks.map((task, idx) => (
-                          <button
-                            key={task.task_id}
-                            onClick={() => handleSwitchTask(task.task_id)}
-                            className={`w-full px-4 py-3 text-left hover:bg-blue-50 border-b last:border-b-0 transition-all ${
-                              task.task_id === id ? 'bg-blue-100 border-l-4 border-l-blue-600' : 'border-l-4 border-l-transparent'
-                            }`}
-                          >
-                            <div className="flex items-center justify-between mb-1.5">
-                              <div className="flex items-center gap-2">
-                                <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
-                                  task.task_id === id ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'
-                                }`}>
-                                  {idx + 1}
-                                </span>
-                                {task.task_id === id && (
-                                  <span className="text-xs font-semibold text-blue-600 bg-blue-100 px-2 py-0.5 rounded">当前</span>
-                                )}
-                              </div>
-                              <span className="text-xs text-gray-500 flex items-center gap-1">
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                {new Date(task.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            </div>
-                            <div className="text-sm text-gray-800 font-medium truncate">
-                              {task.note || `任务 ${task.task_id.substring(0, 8)}...`}
-                            </div>
-                            {task.filename && (
-                              <div className="text-xs text-gray-500 truncate mt-1 flex items-center gap-1">
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                </svg>
-                                {task.filename}
-                              </div>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 下一个按钮 */}
-                  <button
-                    onClick={handleNextTask}
-                    disabled={currentTaskIndex >= completedTasks.length - 1}
-                    className="flex items-center justify-center w-8 h-8 rounded-md bg-white border border-blue-300 hover:bg-blue-100 hover:border-blue-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:border-blue-300 transition-all shadow-sm"
-                    title="下一个任务"
-                  >
-                    <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
-                </div>
-              )}
             </div>
             <div className="flex space-x-2">
               <button
@@ -747,6 +722,13 @@ export default function ResultsPage() {
                 📥 下载结果
               </button>
               <button
+                onClick={handleDeleteTask}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium"
+                title="删除当前任务及其所有数据"
+              >
+                🗑️ 删除任务
+              </button>
+              <button
                 onClick={() => router.push('/prediction')}
                 className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium"
               >
@@ -766,9 +748,94 @@ export default function ResultsPage() {
                 <span className="text-2xl">⚙️</span>
                 <h2 className="text-lg font-bold text-gray-800">任务配置参数</h2>
                 <span className="text-sm text-gray-500 ml-2">
-                  ({taskConfig.request_data?.config?.model_provider || '-'} / {taskConfig.request_data?.config?.model_name || '-'})
+                  ({(taskConfig.config || taskConfig.request_data?.config)?.model_provider || '-'} / {(taskConfig.config || taskConfig.request_data?.config)?.model_name || '-'})
                 </span>
               </div>
+
+              {/* 任务切换器 - 整合到标题栏 */}
+              {completedTasks.length > 1 && (
+                <div className="flex items-center gap-2 mr-4 ml-auto" onClick={(e) => e.preventDefault()}>
+                  {/* 上一个按钮 */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handlePrevTask();
+                    }}
+                    disabled={currentTaskIndex <= 0}
+                    className="flex items-center justify-center w-7 h-7 rounded-full bg-white/50 hover:bg-white text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                    title="上一个任务"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+
+                  {/* 任务选择下拉菜单 */}
+                  <div className="relative" ref={taskSelectorRef}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowTaskSelector(!showTaskSelector);
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-white/60 hover:bg-white rounded-md transition-all text-sm font-medium text-blue-800 min-w-[180px]"
+                    >
+                      <span className="truncate flex-1 text-left">
+                        {currentTaskIndex >= 0 ? `任务 ${currentTaskIndex + 1} / ${completedTasks.length}` : '选择任务'}
+                      </span>
+                      <svg className={`w-3 h-3 transition-transform ${showTaskSelector ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+
+                    {showTaskSelector && (
+                      <div className="absolute top-full right-0 mt-2 w-80 max-h-96 overflow-y-auto bg-white border border-blue-100 rounded-lg shadow-xl z-50">
+                        <div className="sticky top-0 bg-gray-50 text-gray-500 px-3 py-2 text-xs font-medium border-b border-gray-100">
+                          任务列表
+                        </div>
+                        {completedTasks.map((task, idx) => (
+                          <button
+                            key={task.task_id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSwitchTask(task.task_id);
+                            }}
+                            className={`w-full px-3 py-2 text-left hover:bg-blue-50 border-b border-gray-50 last:border-b-0 transition-all ${task.task_id === id ? 'bg-blue-50/80 text-blue-700' : 'text-gray-700'
+                              }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium text-xs">
+                                {idx + 1}. {task.note || `任务 ${task.task_id.substring(0, 6)}`}
+                              </span>
+                              {task.task_id === id && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-gray-400 mt-0.5 truncate">
+                              {new Date(task.created_at).toLocaleString('zh-CN')}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 下一个按钮 */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleNextTask();
+                    }}
+                    disabled={currentTaskIndex >= completedTasks.length - 1}
+                    className="flex items-center justify-center w-7 h-7 rounded-full bg-white/50 hover:bg-white text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                    title="下一个任务"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+
               <span className="text-gray-500 group-open:rotate-180 transition-transform">▼</span>
             </summary>
             <div className="px-6 pb-6">
@@ -778,7 +845,9 @@ export default function ResultsPage() {
                   <h3 className="text-sm font-semibold text-blue-700 border-b border-blue-200 pb-1">📁 基本信息</h3>
                   <div className="text-xs">
                     <span className="text-gray-500">文件名:</span>
-                    <span className="ml-1 font-medium truncate block" title={taskConfig.request_data?.filename}>{taskConfig.request_data?.filename || '-'}</span>
+                    <span className="ml-1 font-medium truncate block" title={taskConfig.request_data?.filename || taskConfig.config?.data_path}>
+                      {taskConfig.request_data?.filename || (taskConfig.config?.data_path ? taskConfig.config.data_path.split(/[/\\]/).pop() : '-')}
+                    </span>
                   </div>
                   {/* 数据统计 */}
                   {(taskConfig.total_rows !== undefined || taskConfig.valid_rows !== undefined) && (
@@ -804,11 +873,11 @@ export default function ResultsPage() {
                   <h3 className="text-sm font-semibold text-green-700 border-b border-green-200 pb-1">📊 列配置</h3>
                   <div className="text-xs">
                     <span className="text-gray-500">目标列:</span>
-                    <span className="ml-1 font-medium">{taskConfig.request_data?.config?.target_columns?.join(', ') || '-'}</span>
+                    <span className="ml-1 font-medium">{(taskConfig.config || taskConfig.request_data?.config)?.target_columns?.join(', ') || '-'}</span>
                   </div>
                   <div className="text-xs">
                     <span className="text-gray-500">成分列数量:</span>
-                    <span className="ml-1 font-medium">{taskConfig.request_data?.config?.composition_column?.length || 0}</span>
+                    <span className="ml-1 font-medium">{(taskConfig.config || taskConfig.request_data?.config)?.composition_column?.length || 0}</span>
                   </div>
                 </div>
 
@@ -817,11 +886,11 @@ export default function ResultsPage() {
                   <h3 className="text-sm font-semibold text-purple-700 border-b border-purple-200 pb-1">🤖 模型配置</h3>
                   <div className="text-xs">
                     <span className="text-gray-500">模型:</span>
-                    <span className="ml-1 font-medium">{taskConfig.request_data?.config?.model_provider || '-'} / {taskConfig.request_data?.config?.model_name || '-'}</span>
+                    <span className="ml-1 font-medium">{(taskConfig.config || taskConfig.request_data?.config)?.model_provider || '-'} / {(taskConfig.config || taskConfig.request_data?.config)?.model_name || '-'}</span>
                   </div>
                   <div className="text-xs">
                     <span className="text-gray-500">温度:</span>
-                    <span className="ml-1 font-medium">{taskConfig.request_data?.config?.temperature ?? '-'}</span>
+                    <span className="ml-1 font-medium">{(taskConfig.config || taskConfig.request_data?.config)?.temperature ?? '-'}</span>
                   </div>
                 </div>
 
@@ -829,12 +898,12 @@ export default function ResultsPage() {
                 <div className="space-y-2 bg-white/70 p-4 rounded-lg border border-orange-100">
                   <h3 className="text-sm font-semibold text-orange-700 border-b border-orange-200 pb-1">⚙️ 执行配置</h3>
                   <div className="grid grid-cols-2 gap-1 text-xs">
-                    <div><span className="text-gray-500">样本数:</span> <span className="font-medium">{taskConfig.request_data?.config?.sample_size ?? '-'}</span></div>
-                    <div><span className="text-gray-500">训练比例:</span> <span className="font-medium">{taskConfig.request_data?.config?.train_ratio ?? '-'}</span></div>
-                    <div><span className="text-gray-500">检索数:</span> <span className="font-medium">{taskConfig.request_data?.config?.max_retrieved_samples ?? '-'}</span></div>
-                    <div><span className="text-gray-500">相似度:</span> <span className="font-medium">{taskConfig.request_data?.config?.similarity_threshold ?? '-'}</span></div>
-                    <div><span className="text-gray-500">并发数:</span> <span className="font-medium">{taskConfig.request_data?.config?.workers ?? '-'}</span></div>
-                    <div><span className="text-gray-500">种子:</span> <span className="font-medium">{taskConfig.request_data?.config?.random_seed ?? '-'}</span></div>
+                    <div><span className="text-gray-500">样本数:</span> <span className="font-medium">{(taskConfig.config || taskConfig.request_data?.config)?.sample_size ?? '-'}</span></div>
+                    <div><span className="text-gray-500">训练比例:</span> <span className="font-medium">{(taskConfig.config || taskConfig.request_data?.config)?.train_ratio ?? '-'}</span></div>
+                    <div><span className="text-gray-500">检索数:</span> <span className="font-medium">{(taskConfig.config || taskConfig.request_data?.config)?.max_retrieved_samples ?? '-'}</span></div>
+                    <div><span className="text-gray-500">相似度:</span> <span className="font-medium">{(taskConfig.config || taskConfig.request_data?.config)?.similarity_threshold ?? '-'}</span></div>
+                    <div><span className="text-gray-500">并发数:</span> <span className="font-medium">{(taskConfig.config || taskConfig.request_data?.config)?.workers ?? '-'}</span></div>
+                    <div><span className="text-gray-500">种子:</span> <span className="font-medium">{(taskConfig.config || taskConfig.request_data?.config)?.random_seed ?? '-'}</span></div>
                   </div>
                 </div>
               </div>
@@ -848,31 +917,28 @@ export default function ResultsPage() {
             <nav className="flex space-x-8 px-6">
               <button
                 onClick={() => setActiveTab('predictions')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'predictions'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'predictions'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
               >
                 预测结果 ({results.predictions.length})
               </button>
               <button
                 onClick={() => setActiveTab('metrics')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'metrics'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'metrics'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
               >
                 评估指标
               </button>
               <button
                 onClick={() => setActiveTab('charts')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'charts'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'charts'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
               >
                 📊 可视化图表
               </button>
@@ -883,22 +949,20 @@ export default function ResultsPage() {
                     setSelectedTarget(targetColumns[0]);
                   }
                 }}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'scatter'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'scatter'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
               >
                 🎯 预测对比散点图
               </button>
               {paretoAnalysis && (
                 <button
                   onClick={() => setActiveTab('pareto')}
-                  className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                    activeTab === 'pareto'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
+                  className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'pareto'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
                 >
                   Pareto 前沿 ({paretoAnalysis.pareto_count})
                 </button>
@@ -1535,6 +1599,24 @@ export default function ResultsPage() {
                     Predicted vs Actual Scatter Plot
                   </h3>
                   <div className="flex items-center gap-3">
+                    {/* 迭代轨迹开关 */}
+                    <div className="flex items-center gap-2 mr-4">
+                      <label htmlFor="trajectory-toggle" className="text-sm font-medium text-gray-700 cursor-pointer">
+                        显示迭代轨迹
+                      </label>
+                      <button
+                        id="trajectory-toggle"
+                        onClick={() => setShowTrajectory(!showTrajectory)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${showTrajectory ? 'bg-blue-600' : 'bg-gray-200'
+                          }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${showTrajectory ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                        />
+                      </button>
+                    </div>
+
                     <ExportButton
                       label="Export Scatter Plot"
                       options={[
@@ -1592,6 +1674,7 @@ export default function ResultsPage() {
                         setSelectedPoint({ ...dataPoint, index });
                         setShowTraceModal(true);
                       }}
+                      showTrajectory={showTrajectory}
                     />
                   </div>
                 )}
@@ -1794,13 +1877,15 @@ export default function ResultsPage() {
       {/* 溯源模态框 - 根据任务配置选择使用迭代预测模态框或普通模态框 */}
       {showTraceModal && selectedPoint && results.task_id && (
         <>
-          {taskConfig?.config?.enable_iteration || taskConfig?.config?.max_iterations > 1 ? (
+          {taskConfig?.enable_iteration || taskConfig?.config?.enable_iteration || taskConfig?.config?.max_iterations > 1 ? (
             <IterativePredictionTraceModal
               isOpen={showTraceModal}
               onClose={() => setShowTraceModal(false)}
               taskId={results.task_id}
               sampleIndex={selectedPoint.index}
               sampleData={selectedPoint}
+              allTasks={completedTasks}
+              onTaskChange={handleSwitchTask}
             />
           ) : (
             <PredictionTraceModal
@@ -1809,6 +1894,8 @@ export default function ResultsPage() {
               taskId={results.task_id}
               sampleIndex={selectedPoint.index}
               sampleData={selectedPoint}
+              allTasks={completedTasks}
+              onTaskChange={handleSwitchTask}
             />
           )}
         </>

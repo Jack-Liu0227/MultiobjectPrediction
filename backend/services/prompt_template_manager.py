@@ -50,6 +50,7 @@ class PromptTemplateManager:
             "output_format": dedent("""
                 Provide your systematic analysis and end with EXACTLY this JSON format:
 
+                ```json
                 {{
                   "predictions": {{
                     {predictions_json_template}
@@ -57,6 +58,7 @@ class PromptTemplateManager:
                   "confidence": "<high/medium/low>",
                   "reasoning": "<your_analysis_summary>"
                 }}
+                ```
             """).strip(),
             "reference_format": "**Reference Samples**:\n\nEach sample shows values for all target properties.\n\n{reference_samples}",
             "analysis_protocol": dedent("""

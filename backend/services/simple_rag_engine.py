@@ -524,7 +524,8 @@ class SimpleRAGEngine:
         temperature: float = 1.0,
         return_details: bool = False,
         custom_template: Optional[Dict] = None,
-        query_features: Optional[Dict[str, Any]] = None
+        query_features: Optional[Dict[str, Any]] = None,
+        prompt_template: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """
         使用 LLM 生成多目标预测
@@ -540,6 +541,7 @@ class SimpleRAGEngine:
             return_details: 是否返回详细信息（prompt 和 LLM 响应）
             custom_template: 自定义模板
             query_features: 查询样本的特征列字典（可选），例如 {"Temperature": 298, "Pressure": 1}
+            prompt_template: 自定义模板（兼容 custom_template 参数）
 
         Returns:
             如果 return_details=False: {target_column: prediction_value}
@@ -550,6 +552,9 @@ class SimpleRAGEngine:
                 'similar_samples': List[Dict]
             }
         """
+        # 兼容 prompt_template 和 custom_template
+        if custom_template is None and prompt_template is not None:
+            custom_template = prompt_template
         # 调用 LLM
         if LITELLM_AVAILABLE:
             # 构建提示词（在 try 外部，确保即使失败也能保存）
@@ -601,36 +606,50 @@ class SimpleRAGEngine:
                     test_sample = "No data available"
 
                 # 格式化相似样本
-                # 优先使用已经构建好的 sample_text（已应用列名映射）
-                # 如果不存在，则重新构建（向后兼容）
+                # 始终重新构建 sample_text 以确保应用正确的列名映射
                 retrieved_samples = []
+                
+                # 确定工艺列和特征列（用于重新构建）
+                # 注意：这里假设 similar_samples 中的字典包含原始数据列
+                
                 for sample in similar_samples:
-                    # 优先使用已经存在的 sample_text
-                    if 'sample_text' in sample and sample['sample_text']:
-                        sample_text = sample['sample_text']
-                    else:
-                        # 向后兼容：如果没有 sample_text，则重新构建
-                        # 确定工艺列列表
-                        processing_columns = None
-                        if isinstance(query_processing, dict):
-                            processing_columns = list(query_processing.keys())
-                        elif sample.get('processing'):
-                            # 向后兼容：单工艺列
-                            processing_columns = ["processing"]
+                    # 确定工艺列列表
+                    processing_columns = None
+                    if isinstance(query_processing, dict):
+                        processing_columns = list(query_processing.keys())
+                    elif sample.get('processing'):
+                        # 向后兼容：单工艺列
+                        processing_columns = ["processing"]
+                    
+                    # 确定特征列列表
+                    feature_columns = list(query_features.keys()) if query_features else None
+                    
+           
+                    
+                    # 构建原始文本
+                    raw_sample_text = SampleTextBuilder.build_from_dict(
+                        sample_dict=sample,
+                        composition_key="composition",
+                        processing_columns=processing_columns,
+                        feature_columns=feature_columns
+                    )
+                    
+                    # 应用列名映射
+                    final_sample_text = raw_sample_text
+                    if column_name_mapping:
+                        for original, mapped in column_name_mapping.items():
+                            # 简单替换：将 "original: " 替换为 "mapped: "
+                            # 注意：SampleTextBuilder 生成的格式通常是 "Key: Value"
+                            final_sample_text = final_sample_text.replace(f"{original}:", f"{mapped}:")
+                    
+                    retrieved_samples.append((final_sample_text, 1.0, sample))
 
-                        # 确定特征列列表
-                        feature_columns = list(query_features.keys()) if query_features else None
-
-                        # 使用 SampleTextBuilder 构建样本文本
-                        sample_text = SampleTextBuilder.build_from_dict(
-                            sample_dict=sample,
-                            composition_key="composition",
-                            processing_columns=processing_columns,
-                            feature_columns=feature_columns
-                        )
-
-                    # metadata 包含所有目标列的值
-                    retrieved_samples.append((sample_text, 1.0, sample))
+                    # 同时更新 similar_samples 中的 sample_text，确保返回的详情中使用映射后的文本
+                    # 注意：这里修改的是 similar_samples 列表中的引用，可能会影响外部？
+                    # 为了安全，我们应该更新 similar_samples 列表中对应项的副本
+                    # 但由于 similar_samples 是从 state["train_data"] 获取的引用，直接修改会影响全局状态
+                    # 所以我们需要在返回结果时构建一个新的 similar_samples 列表
+                    pass  # 实际更新逻辑在下方构建返回结果时处理
 
                 # 构建提示词（多目标）
                 prompt = prompt_builder.build_prompt(
@@ -691,14 +710,23 @@ class SimpleRAGEngine:
 
                         # 从响应中提取多目标预测值
                         predictions = self._extract_multi_target_predictions(prediction_text, target_columns)
+                        
+                        # 提取置信度
+                        parser = LLMResponseParser()
+                        confidence = parser.extract_confidence(prediction_text)
 
                         # 如果需要返回详细信息
                         if return_details:
                             return {
                                 'predictions': predictions,
+                                'confidence': confidence,  # 添加置信度
                                 'prompt': prompt,
                                 'llm_response': prediction_text,
-                                'similar_samples': similar_samples
+                                # 返回更新了 sample_text 的相似样本列表
+                                'similar_samples': [
+                                    {**sample, 'sample_text': text} 
+                                    for (text, _, sample) in retrieved_samples
+                                ]
                             }
                         else:
                             return predictions
@@ -788,8 +816,8 @@ class SimpleRAGEngine:
         6. 支持动态目标属性键名（如 "target_1", "UTS(MPa)" 等）
         """
         # 使用模块化解析器
-        parser = LLMResponseParser()
-        predictions = parser.parse(text, target_columns)
+        response_parser = LLMResponseParser()
+        predictions = response_parser.parse(text, target_columns)
 
         # 验证和填充默认值
         validator = PredictionValidator()

@@ -49,8 +49,8 @@ class PredictionConfig(BaseModel):
     sample_size: int = Field(default=10, ge=1, description="从测试集随机抽取的样本数量（无上限限制）")
     workers: int = Field(default=5, ge=1, description="并行预测的工作线程数（无上限限制）")
     prompt_template: Optional[Dict[str, Any]] = Field(default=None, description="自定义提示词模板（可选）")
-    continue_from_task_id: Optional[str] = Field(default=None, description="继续未完成任务的 task_id（增量预测）")
     force_restart: bool = Field(default=False, description="强制重新开始预测，忽略之前的结果")
+
 
 
 class PredictionRequest(BaseModel):

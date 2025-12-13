@@ -76,7 +76,7 @@ class PromptBuilder:
            - Use fundamental materials principles to support *why* these differences lead to your calculated adjustments.
 
         Provide your systematic analysis and end with EXACTLY this JSON format:
-
+        ```json
         {{
           "predictions": {{
             {predictions_json_template}
@@ -84,6 +84,7 @@ class PromptBuilder:
           "confidence": "<high/medium/low>",
           "reasoning": "<your_analysis_summary>"
         }}
+        ```
     """).strip()
 
     # 迭代预测协议模板（用于第2轮及以后的迭代）
@@ -128,7 +129,7 @@ class PromptBuilder:
            - **Iterative Refinement**: Make **small, justified adjustments** to previous predictions. Avoid large jumps unless strongly justified by reference data. If predictions are oscillating, dampen the adjustment magnitude.
 
         Provide your systematic analysis and end with EXACTLY this JSON format:
-
+        ```json
         {{
           "predictions": {{
             {predictions_json_template}
@@ -136,6 +137,7 @@ class PromptBuilder:
           "confidence": "<high/medium/low>",
           "reasoning": "<your_refinement_analysis>"
         }}
+        ```
     """).strip()
     
     @staticmethod
@@ -638,7 +640,7 @@ class PromptBuilder:
                - Use fundamental materials principles to support *why* these differences lead to your calculated adjustments.
 
             Provide your systematic analysis and end with EXACTLY this JSON format:
-
+            ```json
             {{
               "predictions": {{
                 {predictions_json_template}
@@ -646,7 +648,8 @@ class PromptBuilder:
               "confidence": "<high/medium/low>",
               "reasoning": "<your_analysis_summary>"
             }}
-        """).strip()
+            ```
+            """).strip()
 
         return zero_shot_template
 

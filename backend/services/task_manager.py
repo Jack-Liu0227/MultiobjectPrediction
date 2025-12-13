@@ -615,6 +615,7 @@ class TaskManager:
             "workers": config.get("workers"),
             "note": request_data.get("note"),
             "process_details": task_info.get("process_details"),  # 添加预测过程详情
+            "request_data": request_data,  # 🔥 保留完整的 request_data 以便增量预测获取 file_id/dataset_id
         }
 
 

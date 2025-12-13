@@ -88,7 +88,7 @@ export default function TasksPage() {
   const errorMessage = error ? (typeof error === 'string' ? error : error.message || '加载失败') : null;
 
   // 编辑状态 - 支持多字段编辑
-  const [editingCell, setEditingCell] = useState<{taskId: string, field: 'note' | 'filename' | 'taskId'} | null>(null);
+  const [editingCell, setEditingCell] = useState<{ taskId: string, field: 'note' | 'filename' | 'taskId' } | null>(null);
   const [editingValue, setEditingValue] = useState<string>('');
 
   // 取消任务状态
@@ -784,7 +784,14 @@ export default function TasksPage() {
               <div className="flex items-center gap-4">
                 {/* 返回任务列表按钮 */}
                 <button
-                  onClick={() => router.push('/tasks')}
+                  onClick={() => {
+                    // 如果已经在 /tasks 页面，直接清除查询参数返回列表
+                    if (router.pathname === '/tasks') {
+                      router.push('/tasks', undefined, { shallow: true });
+                    } else {
+                      router.push('/tasks');
+                    }
+                  }}
                   className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
                   title="返回任务列表"
                 >
@@ -805,7 +812,13 @@ export default function TasksPage() {
                   🔮 新建预测
                 </button>
                 <button
-                  onClick={() => router.push('/tasks')}
+                  onClick={() => {
+                    if (router.pathname === '/tasks') {
+                      router.push('/tasks', undefined, { shallow: true });
+                    } else {
+                      router.push('/tasks');
+                    }
+                  }}
                   className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors"
                 >
                   📋 任务列表
@@ -818,227 +831,226 @@ export default function TasksPage() {
         {/* 主内容区域 */}
         <div className="max-w-7xl mx-auto px-4 py-8">
 
-        {/* 错误提示 */}
-        {(errorMessage || detailError) && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded">
-            <p className="text-red-600">{errorMessage || detailError}</p>
-          </div>
-        )}
-
-        {/* 任务状态卡片 */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">状态信息</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <span className="text-gray-600">状态:</span>
-              <span className="ml-2">{getStatusBadge(selectedTask.status)}</span>
-            </div>
-            <div>
-              <span className="text-gray-600">进度:</span>
-              <span className="ml-2 font-medium">
-                {selectedTask.progress !== undefined ? `${Math.round(selectedTask.progress * 100)}%` : '-'}
-              </span>
-            </div>
-            <div>
-              <span className="text-gray-600">创建时间:</span>
-              <span className="ml-2">{formatDate(selectedTask.created_at)}</span>
-            </div>
-            <div>
-              <span className="text-gray-600">完成时间:</span>
-              <span className="ml-2">{formatDate(selectedTask.completed_at)}</span>
-            </div>
-          </div>
-          {/* 只在 failed 状态下显示错误信息，cancelled 状态不显示 */}
-          {selectedTask.status === 'failed' && selectedTask.error && (
-            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded">
-              <p className="text-sm font-medium text-red-800">错误信息:</p>
-              <p className="text-sm text-red-600 mt-1">{selectedTask.error}</p>
+          {/* 错误提示 */}
+          {(errorMessage || detailError) && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded">
+              <p className="text-red-600">{errorMessage || detailError}</p>
             </div>
           )}
-        </div>
 
-        {/* 配置信息卡片 - 使用醒目的边框和背景 */}
-        <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg shadow-lg border-2 border-blue-200 p-6 mb-6">
-          <div className="flex justify-between items-center mb-4">
-            <div className="flex items-center gap-2">
-              <span className="text-2xl">⚙️</span>
-              <h2 className="text-xl font-bold text-gray-800">任务配置参数</h2>
+          {/* 任务状态卡片 */}
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 className="text-xl font-semibold mb-4">状态信息</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <span className="text-gray-600">状态:</span>
+                <span className="ml-2">{getStatusBadge(selectedTask.status)}</span>
+              </div>
+              <div>
+                <span className="text-gray-600">进度:</span>
+                <span className="ml-2 font-medium">
+                  {selectedTask.progress !== undefined ? `${Math.round(selectedTask.progress * 100)}%` : '-'}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-600">创建时间:</span>
+                <span className="ml-2">{formatDate(selectedTask.created_at)}</span>
+              </div>
+              <div>
+                <span className="text-gray-600">完成时间:</span>
+                <span className="ml-2">{formatDate(selectedTask.completed_at)}</span>
+              </div>
             </div>
-            <button
-              onClick={() => {
-                // 跳转到预测页面，使用 rerun_task_id 参数加载配置
-                router.push(`/prediction?rerun_task_id=${selectedTask.task_id}`);
-              }}
-              className="px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 flex items-center gap-2 shadow-md transition-all hover:shadow-lg"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
-              </svg>
-              使用此配置创建新任务
-            </button>
+            {/* 只在 failed 状态下显示错误信息，cancelled 状态不显示 */}
+            {selectedTask.status === 'failed' && selectedTask.error && (
+              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded">
+                <p className="text-sm font-medium text-red-800">错误信息:</p>
+                <p className="text-sm text-red-600 mt-1">{selectedTask.error}</p>
+              </div>
+            )}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* 基本信息 */}
-            <div className="space-y-3 bg-gray-50 p-4 rounded-lg">
-              <h3 className="text-sm font-semibold text-blue-700 mb-2 border-b border-blue-200 pb-1">📁 基本信息</h3>
-              <div>
-                <span className="text-gray-500 text-xs">任务ID:</span>
-                <div className="font-mono text-xs text-gray-800 mt-0.5 break-all bg-white p-2 rounded border border-gray-200">
-                  {selectedTask.task_id}
-                </div>
+
+          {/* 配置信息卡片 - 使用醒目的边框和背景 */}
+          <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg shadow-lg border-2 border-blue-200 p-6 mb-6">
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">⚙️</span>
+                <h2 className="text-xl font-bold text-gray-800">任务配置参数</h2>
               </div>
-              <div>
-                <span className="text-gray-500 text-xs">文件名:</span>
-                <div className="font-medium text-sm mt-0.5 break-words bg-white p-2 rounded border border-gray-200">
-                  {selectedTask.filename}
-                </div>
-              </div>
-              {/* 数据统计信息 */}
-              {(selectedTask.total_rows !== undefined || selectedTask.valid_rows !== undefined) && (
+              <button
+                onClick={() => {
+                  // 跳转到预测页面，使用 rerun_task_id 参数加载配置
+                  router.push(`/prediction?rerun_task_id=${selectedTask.task_id}`);
+                }}
+                className="px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 flex items-center gap-2 shadow-md transition-all hover:shadow-lg"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+                </svg>
+                使用此配置创建新任务
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* 基本信息 */}
+              <div className="space-y-3 bg-gray-50 p-4 rounded-lg">
+                <h3 className="text-sm font-semibold text-blue-700 mb-2 border-b border-blue-200 pb-1">📁 基本信息</h3>
                 <div>
-                  <span className="text-gray-500 text-xs">数据统计:</span>
-                  <div className="font-medium text-sm mt-0.5 bg-white p-2 rounded border border-gray-200">
-                    <div className="flex items-center gap-2">
-                      <span className="text-blue-600">总行数: {selectedTask.total_rows ?? '-'}</span>
-                      <span className="text-gray-400">|</span>
-                      <span className="text-green-600">有效行数: {selectedTask.valid_rows ?? '-'}</span>
+                  <span className="text-gray-500 text-xs">任务ID:</span>
+                  <div className="font-mono text-xs text-gray-800 mt-0.5 break-all bg-white p-2 rounded border border-gray-200">
+                    {selectedTask.task_id}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">文件名:</span>
+                  <div className="font-medium text-sm mt-0.5 break-words bg-white p-2 rounded border border-gray-200">
+                    {selectedTask.filename}
+                  </div>
+                </div>
+                {/* 数据统计信息 */}
+                {(selectedTask.total_rows !== undefined || selectedTask.valid_rows !== undefined) && (
+                  <div>
+                    <span className="text-gray-500 text-xs">数据统计:</span>
+                    <div className="font-medium text-sm mt-0.5 bg-white p-2 rounded border border-gray-200">
+                      <div className="flex items-center gap-2">
+                        <span className="text-blue-600">总行数: {selectedTask.total_rows ?? '-'}</span>
+                        <span className="text-gray-400">|</span>
+                        <span className="text-green-600">有效行数: {selectedTask.valid_rows ?? '-'}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
-              {selectedTask.note && (
-                <div>
-                  <span className="text-gray-500 text-xs">备注:</span>
-                  <div className="font-medium text-sm mt-0.5 break-words bg-white p-2 rounded border border-gray-200 whitespace-pre-wrap">
-                    {selectedTask.note}
+                )}
+                {selectedTask.note && (
+                  <div>
+                    <span className="text-gray-500 text-xs">备注:</span>
+                    <div className="font-medium text-sm mt-0.5 break-words bg-white p-2 rounded border border-gray-200 whitespace-pre-wrap">
+                      {selectedTask.note}
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
 
-            {/* 列配置 */}
-            <div className="space-y-3 bg-gray-50 p-4 rounded-lg">
-              <h3 className="text-sm font-semibold text-green-700 mb-2 border-b border-green-200 pb-1">📊 列配置</h3>
-              <div>
-                <span className="text-gray-500 text-xs">目标列:</span>
-                <span className="font-medium text-sm block mt-0.5">{selectedTask.target_columns?.join(', ') || '-'}</span>
+              {/* 列配置 */}
+              <div className="space-y-3 bg-gray-50 p-4 rounded-lg">
+                <h3 className="text-sm font-semibold text-green-700 mb-2 border-b border-green-200 pb-1">📊 列配置</h3>
+                <div>
+                  <span className="text-gray-500 text-xs">目标列:</span>
+                  <span className="font-medium text-sm block mt-0.5">{selectedTask.target_columns?.join(', ') || '-'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">成分列:</span>
+                  <span className="font-medium text-xs block mt-0.5">
+                    {Array.isArray(selectedTask.composition_column)
+                      ? selectedTask.composition_column.join(', ')
+                      : (selectedTask.composition_column || '-')}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">工艺列:</span>
+                  <span className="font-medium text-xs block mt-0.5">
+                    {Array.isArray(selectedTask.processing_column)
+                      ? selectedTask.processing_column.join(', ')
+                      : (selectedTask.processing_column || '-')}
+                  </span>
+                </div>
               </div>
-              <div>
-                <span className="text-gray-500 text-xs">成分列:</span>
-                <span className="font-medium text-xs block mt-0.5">
-                  {Array.isArray(selectedTask.composition_column)
-                    ? selectedTask.composition_column.join(', ')
-                    : (selectedTask.composition_column || '-')}
-                </span>
-              </div>
-              <div>
-                <span className="text-gray-500 text-xs">工艺列:</span>
-                <span className="font-medium text-xs block mt-0.5">
-                  {Array.isArray(selectedTask.processing_column)
-                    ? selectedTask.processing_column.join(', ')
-                    : (selectedTask.processing_column || '-')}
-                </span>
-              </div>
-            </div>
 
-            {/* 模型配置 */}
-            <div className="space-y-3 bg-gray-50 p-4 rounded-lg">
-              <h3 className="text-sm font-semibold text-purple-700 mb-2 border-b border-purple-200 pb-1">🤖 模型配置</h3>
-              <div>
-                <span className="text-gray-500 text-xs">模型提供商:</span>
-                <span className="font-medium text-sm block mt-0.5">{selectedTask.model_provider || '-'}</span>
+              {/* 模型配置 */}
+              <div className="space-y-3 bg-gray-50 p-4 rounded-lg">
+                <h3 className="text-sm font-semibold text-purple-700 mb-2 border-b border-purple-200 pb-1">🤖 模型配置</h3>
+                <div>
+                  <span className="text-gray-500 text-xs">模型提供商:</span>
+                  <span className="font-medium text-sm block mt-0.5">{selectedTask.model_provider || '-'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">模型名称:</span>
+                  <span className="font-medium text-sm block mt-0.5">{selectedTask.model_name || '-'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">温度参数:</span>
+                  <span className="font-medium text-sm block mt-0.5">{selectedTask.temperature !== undefined ? selectedTask.temperature : '-'}</span>
+                </div>
               </div>
-              <div>
-                <span className="text-gray-500 text-xs">模型名称:</span>
-                <span className="font-medium text-sm block mt-0.5">{selectedTask.model_name || '-'}</span>
-              </div>
-              <div>
-                <span className="text-gray-500 text-xs">温度参数:</span>
-                <span className="font-medium text-sm block mt-0.5">{selectedTask.temperature !== undefined ? selectedTask.temperature : '-'}</span>
-              </div>
-            </div>
 
-            {/* 数据与执行配置 */}
-            <div className="space-y-3 bg-gray-50 p-4 rounded-lg">
-              <h3 className="text-sm font-semibold text-orange-700 mb-2 border-b border-orange-200 pb-1">⚙️ 执行配置</h3>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <span className="text-gray-500 text-xs">样本数:</span>
-                  <span className="font-medium text-sm block mt-0.5">{selectedTask.sample_size ?? '-'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500 text-xs">训练比例:</span>
-                  <span className="font-medium text-sm block mt-0.5">{selectedTask.train_ratio ?? '-'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500 text-xs">检索数:</span>
-                  <span className="font-medium text-sm block mt-0.5">{selectedTask.max_retrieved_samples ?? '-'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500 text-xs">相似度:</span>
-                  <span className="font-medium text-sm block mt-0.5">{selectedTask.similarity_threshold ?? '-'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500 text-xs">并发数:</span>
-                  <span className="font-medium text-sm block mt-0.5">{selectedTask.workers ?? '-'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500 text-xs">随机种子:</span>
-                  <span className="font-medium text-sm block mt-0.5">{selectedTask.random_seed ?? '-'}</span>
+              {/* 数据与执行配置 */}
+              <div className="space-y-3 bg-gray-50 p-4 rounded-lg">
+                <h3 className="text-sm font-semibold text-orange-700 mb-2 border-b border-orange-200 pb-1">⚙️ 执行配置</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <span className="text-gray-500 text-xs">样本数:</span>
+                    <span className="font-medium text-sm block mt-0.5">{selectedTask.sample_size ?? '-'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">训练比例:</span>
+                    <span className="font-medium text-sm block mt-0.5">{selectedTask.train_ratio ?? '-'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">检索数:</span>
+                    <span className="font-medium text-sm block mt-0.5">{selectedTask.max_retrieved_samples ?? '-'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">相似度:</span>
+                    <span className="font-medium text-sm block mt-0.5">{selectedTask.similarity_threshold ?? '-'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">并发数:</span>
+                    <span className="font-medium text-sm block mt-0.5">{selectedTask.workers ?? '-'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">随机种子:</span>
+                    <span className="font-medium text-sm block mt-0.5">{selectedTask.random_seed ?? '-'}</span>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* 操作按钮 */}
-        <div className="flex gap-4 flex-wrap">
-          {selectedTask.result_id && (
-            <button
-              onClick={() => router.push(`/results/${selectedTask.result_id}`)}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              查看结果
-            </button>
-          )}
-          {/* 停止任务按钮：仅在 pending 或 running 状态时显示 */}
-          {(selectedTask.status === 'pending' || selectedTask.status === 'running') && (
-            <button
-              onClick={() => handleCancel(selectedTask.task_id)}
-              disabled={cancellingTaskId === selectedTask.task_id}
-              className={`px-6 py-3 text-white rounded-lg ${
-                cancellingTaskId === selectedTask.task_id
+          {/* 操作按钮 */}
+          <div className="flex gap-4 flex-wrap">
+            {selectedTask.result_id && (
+              <button
+                onClick={() => router.push(`/results/${selectedTask.result_id}`)}
+                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                查看结果
+              </button>
+            )}
+            {/* 停止任务按钮：仅在 pending 或 running 状态时显示 */}
+            {(selectedTask.status === 'pending' || selectedTask.status === 'running') && (
+              <button
+                onClick={() => handleCancel(selectedTask.task_id)}
+                disabled={cancellingTaskId === selectedTask.task_id}
+                className={`px-6 py-3 text-white rounded-lg ${cancellingTaskId === selectedTask.task_id
                   ? 'bg-gray-400 cursor-not-allowed'
                   : 'bg-orange-600 hover:bg-orange-700'
-              }`}
-            >
-              {cancellingTaskId === selectedTask.task_id ? '取消中...' : '停止任务'}
-            </button>
-          )}
-          {(selectedTask.status === 'failed' || selectedTask.status === 'cancelled') && (
+                  }`}
+              >
+                {cancellingTaskId === selectedTask.task_id ? '取消中...' : '停止任务'}
+              </button>
+            )}
+            {(selectedTask.status === 'failed' || selectedTask.status === 'cancelled') && (
+              <button
+                onClick={() => handleContinue(selectedTask.task_id)}
+                className="px-6 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
+              >
+                继续预测
+              </button>
+            )}
             <button
-              onClick={() => handleContinue(selectedTask.task_id)}
-              className="px-6 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
+              onClick={() => handleRerun(selectedTask.task_id)}
+              className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700"
             >
-              继续预测
+              重新运行
             </button>
-          )}
-          <button
-            onClick={() => handleRerun(selectedTask.task_id)}
-            className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700"
-          >
-            重新运行
-          </button>
-          <button
-            onClick={() => {
-              handleDelete(selectedTask.task_id);
-              router.push('/tasks');
-            }}
-            className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700"
-          >
-            删除任务
-          </button>
-        </div>
+            <button
+              onClick={() => {
+                handleDelete(selectedTask.task_id);
+                router.push('/tasks');
+              }}
+              className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700"
+            >
+              删除任务
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1089,540 +1101,540 @@ export default function TasksPage() {
       {/* 主内容区域 */}
       <div className="max-w-7xl mx-auto px-4 py-8">
 
-      {/* 成功提示消息 */}
-      {successMessage && (
-        <div className="mb-4 p-4 bg-green-100 border border-green-400 text-green-700 rounded-lg flex items-center justify-between">
-          <span>✓ {successMessage}</span>
-          <button
-            onClick={() => setSuccessMessage(null)}
-            className="text-green-700 hover:text-green-900"
+        {/* 成功提示消息 */}
+        {successMessage && (
+          <div className="mb-4 p-4 bg-green-100 border border-green-400 text-green-700 rounded-lg flex items-center justify-between">
+            <span>✓ {successMessage}</span>
+            <button
+              onClick={() => setSuccessMessage(null)}
+              className="text-green-700 hover:text-green-900"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* 筛选器和操作栏 */}
+        <div className="mb-6 flex gap-4 items-center flex-wrap">
+          <select
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setPage(1);
+            }}
+            className="border border-gray-300 rounded px-4 py-2"
           >
-            ✕
+            <option value="">全部状态</option>
+            <option value="pending">等待中</option>
+            <option value="running">运行中</option>
+            <option value="completed">已完成</option>
+            <option value="failed">失败</option>
+            <option value="cancelled">已取消</option>
+          </select>
+
+          <select
+            value={sortOrder}
+            onChange={(e) => {
+              setSortOrder(e.target.value as 'asc' | 'desc');
+              setPage(1);
+            }}
+            className="border border-gray-300 rounded px-4 py-2"
+          >
+            <option value="desc">最新优先</option>
+            <option value="asc">最旧优先</option>
+          </select>
+
+          <button
+            onClick={loadTasks}
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            刷新
           </button>
+
+          {tasks.length > 0 && (
+            <ExportButton
+              label="导出任务列表"
+              options={[
+                {
+                  label: '导出为 CSV',
+                  format: 'csv',
+                  onClick: () => {
+                    const exportData = tasks.map(task => ({
+                      任务ID: task.task_id,
+                      状态: task.status,
+                      文件名: task.filename,
+                      备注: task.note || '-',
+                      目标列: task.target_columns.join(', '),
+                      模型: task.model_name || '-',
+                      创建时间: formatDate(task.created_at),
+                      完成时间: formatDate(task.completed_at),
+                      进度: task.progress !== undefined ? `${Math.round(task.progress * 100)}%` : '-',
+                    }));
+                    exportToCSV(
+                      exportData,
+                      generateFileName('task_history', 'csv')
+                    );
+                  },
+                },
+                {
+                  label: '导出为 Excel',
+                  format: 'excel',
+                  onClick: () => {
+                    const exportData = tasks.map(task => ({
+                      任务ID: task.task_id,
+                      状态: task.status,
+                      文件名: task.filename,
+                      备注: task.note || '-',
+                      目标列: task.target_columns.join(', '),
+                      模型: task.model_name || '-',
+                      创建时间: formatDate(task.created_at),
+                      完成时间: formatDate(task.completed_at),
+                      进度: task.progress !== undefined ? `${Math.round(task.progress * 100)}%` : '-',
+                    }));
+                    exportToExcel(
+                      exportData,
+                      generateFileName('task_history', 'xlsx'),
+                      '任务历史'
+                    );
+                  },
+                },
+                {
+                  label: '导出为 HTML',
+                  format: 'html',
+                  onClick: () => {
+                    const exportData = tasks.map(task => ({
+                      任务ID: task.task_id,
+                      状态: task.status,
+                      文件名: task.filename,
+                      备注: task.note || '-',
+                      目标列: task.target_columns.join(', '),
+                      模型: task.model_name || '-',
+                      创建时间: formatDate(task.created_at),
+                      完成时间: formatDate(task.completed_at),
+                      进度: task.progress !== undefined ? `${Math.round(task.progress * 100)}%` : '-',
+                    }));
+                    exportToHTML(
+                      exportData,
+                      generateFileName('task_history', 'html'),
+                      '任务历史列表'
+                    );
+                  },
+                },
+              ]}
+            />
+          )}
+
+          {selectedTaskIds.size > 0 && (
+            <>
+              <div className="text-sm text-gray-600">
+                已选择 {selectedTaskIds.size} 个任务
+              </div>
+              <button
+                onClick={handleBatchRerun}
+                className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 flex items-center gap-2"
+                title="批量重新预测选中的任务（创建新任务）"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                批量重新预测
+              </button>
+              <button
+                onClick={handleBatchIncremental}
+                className="px-4 py-2 bg-cyan-500 text-white rounded hover:bg-cyan-600 flex items-center gap-2"
+                title="批量增量预测选中的任务（继续预测未完成的样本）"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                批量增量预测
+              </button>
+              <button
+                onClick={handleBatchCancel}
+                className="px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 flex items-center gap-2"
+                title="批量停止选中的运行中或等待中的任务"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                批量停止
+              </button>
+              <button
+                onClick={handleBatchDelete}
+                className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+              >
+                批量删除
+              </button>
+              <button
+                onClick={() => setSelectedTaskIds(new Set())}
+                className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+              >
+                取消选择
+              </button>
+            </>
+          )}
         </div>
-      )}
 
-      {/* 筛选器和操作栏 */}
-      <div className="mb-6 flex gap-4 items-center flex-wrap">
-        <select
-          value={statusFilter}
-          onChange={(e) => {
-            setStatusFilter(e.target.value);
-            setPage(1);
-          }}
-          className="border border-gray-300 rounded px-4 py-2"
-        >
-          <option value="">全部状态</option>
-          <option value="pending">等待中</option>
-          <option value="running">运行中</option>
-          <option value="completed">已完成</option>
-          <option value="failed">失败</option>
-          <option value="cancelled">已取消</option>
-        </select>
-
-        <select
-          value={sortOrder}
-          onChange={(e) => {
-            setSortOrder(e.target.value as 'asc' | 'desc');
-            setPage(1);
-          }}
-          className="border border-gray-300 rounded px-4 py-2"
-        >
-          <option value="desc">最新优先</option>
-          <option value="asc">最旧优先</option>
-        </select>
-
-        <button
-          onClick={loadTasks}
-          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-        >
-          刷新
-        </button>
-
-        {tasks.length > 0 && (
-          <ExportButton
-            label="导出任务列表"
-            options={[
-              {
-                label: '导出为 CSV',
-                format: 'csv',
-                onClick: () => {
-                  const exportData = tasks.map(task => ({
-                    任务ID: task.task_id,
-                    状态: task.status,
-                    文件名: task.filename,
-                    备注: task.note || '-',
-                    目标列: task.target_columns.join(', '),
-                    模型: task.model_name || '-',
-                    创建时间: formatDate(task.created_at),
-                    完成时间: formatDate(task.completed_at),
-                    进度: task.progress !== undefined ? `${Math.round(task.progress * 100)}%` : '-',
-                  }));
-                  exportToCSV(
-                    exportData,
-                    generateFileName('task_history', 'csv')
-                  );
-                },
-              },
-              {
-                label: '导出为 Excel',
-                format: 'excel',
-                onClick: () => {
-                  const exportData = tasks.map(task => ({
-                    任务ID: task.task_id,
-                    状态: task.status,
-                    文件名: task.filename,
-                    备注: task.note || '-',
-                    目标列: task.target_columns.join(', '),
-                    模型: task.model_name || '-',
-                    创建时间: formatDate(task.created_at),
-                    完成时间: formatDate(task.completed_at),
-                    进度: task.progress !== undefined ? `${Math.round(task.progress * 100)}%` : '-',
-                  }));
-                  exportToExcel(
-                    exportData,
-                    generateFileName('task_history', 'xlsx'),
-                    '任务历史'
-                  );
-                },
-              },
-              {
-                label: '导出为 HTML',
-                format: 'html',
-                onClick: () => {
-                  const exportData = tasks.map(task => ({
-                    任务ID: task.task_id,
-                    状态: task.status,
-                    文件名: task.filename,
-                    备注: task.note || '-',
-                    目标列: task.target_columns.join(', '),
-                    模型: task.model_name || '-',
-                    创建时间: formatDate(task.created_at),
-                    完成时间: formatDate(task.completed_at),
-                    进度: task.progress !== undefined ? `${Math.round(task.progress * 100)}%` : '-',
-                  }));
-                  exportToHTML(
-                    exportData,
-                    generateFileName('task_history', 'html'),
-                    '任务历史列表'
-                  );
-                },
-              },
-            ]}
-          />
+        {/* 错误提示 */}
+        {errorMessage && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded">
+            <p className="text-red-600">{errorMessage}</p>
+          </div>
         )}
 
-        {selectedTaskIds.size > 0 && (
-          <>
-            <div className="text-sm text-gray-600">
-              已选择 {selectedTaskIds.size} 个任务
-            </div>
-            <button
-              onClick={handleBatchRerun}
-              className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 flex items-center gap-2"
-              title="批量重新预测选中的任务（创建新任务）"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              批量重新预测
-            </button>
-            <button
-              onClick={handleBatchIncremental}
-              className="px-4 py-2 bg-cyan-500 text-white rounded hover:bg-cyan-600 flex items-center gap-2"
-              title="批量增量预测选中的任务（继续预测未完成的样本）"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              批量增量预测
-            </button>
-            <button
-              onClick={handleBatchCancel}
-              className="px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 flex items-center gap-2"
-              title="批量停止选中的运行中或等待中的任务"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              批量停止
-            </button>
-            <button
-              onClick={handleBatchDelete}
-              className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
-            >
-              批量删除
-            </button>
-            <button
-              onClick={() => setSelectedTaskIds(new Set())}
-              className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-            >
-              取消选择
-            </button>
-          </>
+        {/* 加载中 */}
+        {loading && (
+          <div className="text-center py-12">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+            <p className="mt-2 text-gray-600">加载中...</p>
+          </div>
         )}
-      </div>
 
-      {/* 错误提示 */}
-      {errorMessage && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded">
-          <p className="text-red-600">{errorMessage}</p>
-        </div>
-      )}
+        {/* 任务列表 */}
+        {!loading && tasks.length === 0 && (
+          <div className="text-center py-12 bg-gray-50 rounded">
+            <p className="text-gray-600">暂无任务记录</p>
+          </div>
+        )}
 
-      {/* 加载中 */}
-      {loading && (
-        <div className="text-center py-12">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-          <p className="mt-2 text-gray-600">加载中...</p>
-        </div>
-      )}
-
-      {/* 任务列表 */}
-      {!loading && tasks.length === 0 && (
-        <div className="text-center py-12 bg-gray-50 rounded">
-          <p className="text-gray-600">暂无任务记录</p>
-        </div>
-      )}
-
-      {!loading && tasks.length > 0 && (
-        <div className="bg-white rounded-lg shadow overflow-x-auto" style={{ maxHeight: 'calc(100vh - 320px)', overflowY: 'auto' }}>
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50 sticky top-0 z-10">
-              <tr>
-                <th className="px-4 py-3 text-left w-12 bg-gray-50">
-                  <input
-                    type="checkbox"
-                    checked={selectedTaskIds.size === tasks.length && tasks.length > 0}
-                    onChange={toggleSelectAll}
-                    className="rounded border-gray-300"
-                  />
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24 bg-gray-50">
-                  状态
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[200px] bg-gray-50">
-                  任务ID
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[280px] bg-gray-50">
-                  文件名
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[140px] bg-gray-50">
-                  数据统计
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[250px] bg-gray-50">
-                  备注
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[180px] bg-gray-50">
-                  目标列
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[160px] bg-gray-50">
-                  模型
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[140px] bg-gray-50">
-                  配置参数
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[140px] bg-gray-50">
-                  创建时间
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[140px] bg-gray-50">
-                  完成时间
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[280px] bg-gray-50">
-                  操作
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {tasks.map((task) => (
-                <tr key={task.task_id} className="group hover:bg-gray-50">
-                  {/* 复选框 */}
-                  <td className="px-4 py-4">
+        {!loading && tasks.length > 0 && (
+          <div className="bg-white rounded-lg shadow overflow-x-auto" style={{ maxHeight: 'calc(100vh - 320px)', overflowY: 'auto' }}>
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50 sticky top-0 z-10">
+                <tr>
+                  <th className="px-4 py-3 text-left w-12 bg-gray-50">
                     <input
                       type="checkbox"
-                      checked={selectedTaskIds.has(task.task_id)}
-                      onChange={() => toggleSelectTask(task.task_id)}
+                      checked={selectedTaskIds.size === tasks.length && tasks.length > 0}
+                      onChange={toggleSelectAll}
                       className="rounded border-gray-300"
                     />
-                  </td>
-
-                  {/* 状态 */}
-                  <td className="px-4 py-4 whitespace-nowrap">
-                    {getStatusBadge(task.status)}
-                    {task.progress !== undefined && task.status === 'running' && (
-                      <div className="mt-1 text-xs text-gray-500">
-                        {Math.round(task.progress * 100)}%
-                      </div>
-                    )}
-                    {task.status === 'failed' && task.error && (
-                      <div className="text-xs text-red-600 mt-1" title={task.error}>
-                        错误
-                      </div>
-                    )}
-                  </td>
-
-                  {/* 任务ID - 完整显示，可双击复制 */}
-                  <td className="px-4 py-4">
-                    <div
-                      className="font-mono text-xs text-gray-700 cursor-pointer hover:bg-blue-50 px-2 py-1 rounded"
-                      onDoubleClick={() => {
-                        navigator.clipboard.writeText(task.task_id);
-                        alert('任务ID已复制到剪贴板');
-                      }}
-                      title={`双击复制完整任务ID: ${task.task_id}`}
-                    >
-                      <TruncatedText
-                        text={task.task_id}
-                        maxLength={24}
-                        className="font-mono text-xs text-gray-700"
-                      />
-                    </div>
-                  </td>
-
-                  {/* 文件名 - 使用截断显示 */}
-                  <td className="px-4 py-4">
-                    <TruncatedText
-                      text={task.filename}
-                      maxLength={35}
-                      className="text-sm font-medium text-gray-900"
-                    />
-                  </td>
-
-                  {/* 数据统计 */}
-                  <td className="px-4 py-4 whitespace-nowrap">
-                    {(task.total_rows !== undefined || task.valid_rows !== undefined) ? (
-                      <div className="text-xs">
-                        <div className="text-blue-600 font-medium">
-                          总: {task.total_rows ?? '-'}
-                        </div>
-                        <div className="text-green-600">
-                          有效: {task.valid_rows ?? '-'}
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-xs text-gray-400">-</span>
-                    )}
-                  </td>
-
-                  {/* 备注 - 可双击编辑，使用截断显示 */}
-                  <td className="px-4 py-4">
-                    {editingCell?.taskId === task.task_id && editingCell?.field === 'note' ? (
-                      <div className="flex items-center gap-2">
-                        <textarea
-                          value={editingValue}
-                          onChange={(e) => setEditingValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !e.shiftKey) {
-                              e.preventDefault();
-                              handleSaveEdit();
-                            } else if (e.key === 'Escape') {
-                              handleCancelEdit();
-                            }
-                          }}
-                          className="flex-1 px-2 py-1 border border-blue-500 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-                          placeholder="输入备注..."
-                          maxLength={500}
-                          rows={2}
-                          autoFocus
-                        />
-                        <div className="flex flex-col gap-1">
-                          <button
-                            onClick={handleSaveEdit}
-                            className="text-green-600 hover:text-green-900 text-lg"
-                            title="保存 (Enter)"
-                          >
-                            ✓
-                          </button>
-                          <button
-                            onClick={handleCancelEdit}
-                            className="text-red-600 hover:text-red-900 text-lg"
-                            title="取消 (Esc)"
-                          >
-                            ✗
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div
-                        className="flex items-center gap-2 cursor-pointer hover:bg-blue-50 px-2 py-1 rounded min-h-[32px]"
-                        onDoubleClick={() => handleStartEdit(task, 'note')}
-                        title="双击编辑备注"
-                      >
-                        <div className="flex-1 text-sm">
-                          {task.note ? (
-                            <TruncatedText text={task.note} maxLength={30} />
-                          ) : (
-                            <span className="text-gray-400">点击编辑...</span>
-                          )}
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleStartEdit(task, 'note');
-                          }}
-                          className="text-blue-600 hover:text-blue-900 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                          title="编辑备注"
-                        >
-                          ✏️
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                  {/* 目标列 - 使用截断显示 */}
-                  <td className="px-4 py-4">
-                    <TruncatedText
-                      text={task.target_columns?.join(', ') || '-'}
-                      maxLength={20}
-                      className="text-sm text-gray-900"
-                    />
-                  </td>
-
-                  {/* 模型 */}
-                  <td className="px-4 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">
-                      {task.model_provider || '-'}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {task.model_name || '-'}
-                    </div>
-                  </td>
-
-                  {/* 配置参数 */}
-                  <td className="px-4 py-4 whitespace-nowrap">
-                    <div className="relative group">
-                      <div className="text-xs text-gray-700 cursor-pointer hover:text-blue-600">
-                        <span className="font-medium">{task.sample_size || '-'}</span>
-                        <span className="text-gray-400 mx-1">|</span>
-                        <span>{task.train_ratio || '-'}</span>
-                        <span className="text-gray-400 mx-1">|</span>
-                        <span>{task.workers || '-'}线程</span>
-                      </div>
-                      {/* Tooltip 完整配置 */}
-                      <div className="absolute z-10 invisible group-hover:visible bg-gray-900 text-white text-xs rounded-lg p-3 w-64 left-0 top-full mt-1 shadow-lg">
-                        <div className="font-semibold mb-2 text-blue-300">完整配置参数</div>
-                        <div className="space-y-1">
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">样本数量:</span>
-                            <span>{task.sample_size ?? '-'}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">训练比例:</span>
-                            <span>{task.train_ratio ?? '-'}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">检索样本数:</span>
-                            <span>{task.max_retrieved_samples ?? '-'}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">相似度阈值:</span>
-                            <span>{task.similarity_threshold ?? '-'}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">温度参数:</span>
-                            <span>{task.temperature ?? '-'}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">并发线程:</span>
-                            <span>{task.workers ?? '-'}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">随机种子:</span>
-                            <span>{task.random_seed ?? '-'}</span>
-                          </div>
-                        </div>
-                        <div className="absolute -top-1 left-4 w-2 h-2 bg-gray-900 transform rotate-45"></div>
-                      </div>
-                    </div>
-                  </td>
-
-                  {/* 创建时间 */}
-                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {formatDate(task.created_at)}
-                  </td>
-
-                  {/* 完成时间 */}
-                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {formatDate(task.completed_at)}
-                  </td>
-
-                  {/* 操作 */}
-                  <td className="px-4 py-4 text-sm font-medium">
-                    <div className="flex gap-2 flex-wrap min-w-[300px]">
-                      {task.result_id && (
-                        <button
-                          onClick={() => handleViewResult(task.result_id!)}
-                          className="text-blue-600 hover:text-blue-900"
-                        >
-                          查看结果
-                        </button>
-                      )}
-                      {/* 停止按钮：仅在 pending 或 running 状态时显示 */}
-                      {(task.status === 'pending' || task.status === 'running') && (
-                        <button
-                          onClick={() => handleCancel(task.task_id)}
-                          disabled={cancellingTaskId === task.task_id}
-                          className={`${cancellingTaskId === task.task_id
-                            ? 'text-gray-400 cursor-not-allowed'
-                            : 'text-orange-600 hover:text-orange-900'}`}
-                        >
-                          {cancellingTaskId === task.task_id ? '取消中...' : '停止'}
-                        </button>
-                      )}
-                      {/* 重新预测按钮：创建新任务，从头开始预测 */}
-                      {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') && (
-                        <button
-                          onClick={() => handleRerun(task.task_id)}
-                          className="text-green-600 hover:text-green-900"
-                          title="创建新任务，从头开始重新预测所有样本"
-                        >
-                          重新预测
-                        </button>
-                      )}
-                      {/* 增量预测按钮：允许所有状态的任务 */}
-                      <button
-                        onClick={() => handleIncrementalPredict(task.task_id)}
-                        className="text-cyan-600 hover:text-cyan-900"
-                        title="继续预测未完成的样本"
-                      >
-                        增量预测
-                      </button>
-                      <button
-                        onClick={() => handleDelete(task.task_id)}
-                        className="text-red-600 hover:text-red-900"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </td>
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24 bg-gray-50">
+                    状态
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[200px] bg-gray-50">
+                    任务ID
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[280px] bg-gray-50">
+                    文件名
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[140px] bg-gray-50">
+                    数据统计
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[250px] bg-gray-50">
+                    备注
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[180px] bg-gray-50">
+                    目标列
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[160px] bg-gray-50">
+                    模型
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[140px] bg-gray-50">
+                    配置参数
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[140px] bg-gray-50">
+                    创建时间
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[140px] bg-gray-50">
+                    完成时间
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-[280px] bg-gray-50">
+                    操作
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {tasks.map((task) => (
+                  <tr key={task.task_id} className="group hover:bg-gray-50">
+                    {/* 复选框 */}
+                    <td className="px-4 py-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedTaskIds.has(task.task_id)}
+                        onChange={() => toggleSelectTask(task.task_id)}
+                        className="rounded border-gray-300"
+                      />
+                    </td>
 
-      {/* 分页 */}
-      {totalPages > 1 && (
-        <div className="mt-6 flex justify-center gap-2">
-          <button
-            onClick={() => setPage(Math.max(1, page - 1))}
-            disabled={page === 1}
-            className="px-4 py-2 border border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-          >
-            上一页
-          </button>
-          <span className="px-4 py-2">
-            第 {page} / {totalPages} 页（共 {total} 条）
-          </span>
-          <button
-            onClick={() => setPage(Math.min(totalPages, page + 1))}
-            disabled={page === totalPages}
-            className="px-4 py-2 border border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-          >
-            下一页
-          </button>
-        </div>
-      )}
+                    {/* 状态 */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      {getStatusBadge(task.status)}
+                      {task.progress !== undefined && task.status === 'running' && (
+                        <div className="mt-1 text-xs text-gray-500">
+                          {Math.round(task.progress * 100)}%
+                        </div>
+                      )}
+                      {task.status === 'failed' && task.error && (
+                        <div className="text-xs text-red-600 mt-1" title={task.error}>
+                          错误
+                        </div>
+                      )}
+                    </td>
+
+                    {/* 任务ID - 完整显示，可双击复制 */}
+                    <td className="px-4 py-4">
+                      <div
+                        className="font-mono text-xs text-gray-700 cursor-pointer hover:bg-blue-50 px-2 py-1 rounded"
+                        onDoubleClick={() => {
+                          navigator.clipboard.writeText(task.task_id);
+                          alert('任务ID已复制到剪贴板');
+                        }}
+                        title={`双击复制完整任务ID: ${task.task_id}`}
+                      >
+                        <TruncatedText
+                          text={task.task_id}
+                          maxLength={24}
+                          className="font-mono text-xs text-gray-700"
+                        />
+                      </div>
+                    </td>
+
+                    {/* 文件名 - 使用截断显示 */}
+                    <td className="px-4 py-4">
+                      <TruncatedText
+                        text={task.filename}
+                        maxLength={35}
+                        className="text-sm font-medium text-gray-900"
+                      />
+                    </td>
+
+                    {/* 数据统计 */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      {(task.total_rows !== undefined || task.valid_rows !== undefined) ? (
+                        <div className="text-xs">
+                          <div className="text-blue-600 font-medium">
+                            总: {task.total_rows ?? '-'}
+                          </div>
+                          <div className="text-green-600">
+                            有效: {task.valid_rows ?? '-'}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-400">-</span>
+                      )}
+                    </td>
+
+                    {/* 备注 - 可双击编辑，使用截断显示 */}
+                    <td className="px-4 py-4">
+                      {editingCell?.taskId === task.task_id && editingCell?.field === 'note' ? (
+                        <div className="flex items-center gap-2">
+                          <textarea
+                            value={editingValue}
+                            onChange={(e) => setEditingValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                handleSaveEdit();
+                              } else if (e.key === 'Escape') {
+                                handleCancelEdit();
+                              }
+                            }}
+                            className="flex-1 px-2 py-1 border border-blue-500 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                            placeholder="输入备注..."
+                            maxLength={500}
+                            rows={2}
+                            autoFocus
+                          />
+                          <div className="flex flex-col gap-1">
+                            <button
+                              onClick={handleSaveEdit}
+                              className="text-green-600 hover:text-green-900 text-lg"
+                              title="保存 (Enter)"
+                            >
+                              ✓
+                            </button>
+                            <button
+                              onClick={handleCancelEdit}
+                              className="text-red-600 hover:text-red-900 text-lg"
+                              title="取消 (Esc)"
+                            >
+                              ✗
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          className="flex items-center gap-2 cursor-pointer hover:bg-blue-50 px-2 py-1 rounded min-h-[32px]"
+                          onDoubleClick={() => handleStartEdit(task, 'note')}
+                          title="双击编辑备注"
+                        >
+                          <div className="flex-1 text-sm">
+                            {task.note ? (
+                              <TruncatedText text={task.note} maxLength={30} />
+                            ) : (
+                              <span className="text-gray-400">点击编辑...</span>
+                            )}
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleStartEdit(task, 'note');
+                            }}
+                            className="text-blue-600 hover:text-blue-900 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                            title="编辑备注"
+                          >
+                            ✏️
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                    {/* 目标列 - 使用截断显示 */}
+                    <td className="px-4 py-4">
+                      <TruncatedText
+                        text={task.target_columns?.join(', ') || '-'}
+                        maxLength={20}
+                        className="text-sm text-gray-900"
+                      />
+                    </td>
+
+                    {/* 模型 */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        {task.model_provider || '-'}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {task.model_name || '-'}
+                      </div>
+                    </td>
+
+                    {/* 配置参数 */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <div className="relative group">
+                        <div className="text-xs text-gray-700 cursor-pointer hover:text-blue-600">
+                          <span className="font-medium">{task.sample_size || '-'}</span>
+                          <span className="text-gray-400 mx-1">|</span>
+                          <span>{task.train_ratio || '-'}</span>
+                          <span className="text-gray-400 mx-1">|</span>
+                          <span>{task.workers || '-'}线程</span>
+                        </div>
+                        {/* Tooltip 完整配置 */}
+                        <div className="absolute z-10 invisible group-hover:visible bg-gray-900 text-white text-xs rounded-lg p-3 w-64 left-0 top-full mt-1 shadow-lg">
+                          <div className="font-semibold mb-2 text-blue-300">完整配置参数</div>
+                          <div className="space-y-1">
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">样本数量:</span>
+                              <span>{task.sample_size ?? '-'}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">训练比例:</span>
+                              <span>{task.train_ratio ?? '-'}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">检索样本数:</span>
+                              <span>{task.max_retrieved_samples ?? '-'}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">相似度阈值:</span>
+                              <span>{task.similarity_threshold ?? '-'}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">温度参数:</span>
+                              <span>{task.temperature ?? '-'}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">并发线程:</span>
+                              <span>{task.workers ?? '-'}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">随机种子:</span>
+                              <span>{task.random_seed ?? '-'}</span>
+                            </div>
+                          </div>
+                          <div className="absolute -top-1 left-4 w-2 h-2 bg-gray-900 transform rotate-45"></div>
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* 创建时间 */}
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatDate(task.created_at)}
+                    </td>
+
+                    {/* 完成时间 */}
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatDate(task.completed_at)}
+                    </td>
+
+                    {/* 操作 */}
+                    <td className="px-4 py-4 text-sm font-medium">
+                      <div className="flex gap-2 flex-wrap min-w-[300px]">
+                        {task.result_id && (
+                          <button
+                            onClick={() => handleViewResult(task.result_id!)}
+                            className="text-blue-600 hover:text-blue-900"
+                          >
+                            查看结果
+                          </button>
+                        )}
+                        {/* 停止按钮：仅在 pending 或 running 状态时显示 */}
+                        {(task.status === 'pending' || task.status === 'running') && (
+                          <button
+                            onClick={() => handleCancel(task.task_id)}
+                            disabled={cancellingTaskId === task.task_id}
+                            className={`${cancellingTaskId === task.task_id
+                              ? 'text-gray-400 cursor-not-allowed'
+                              : 'text-orange-600 hover:text-orange-900'}`}
+                          >
+                            {cancellingTaskId === task.task_id ? '取消中...' : '停止'}
+                          </button>
+                        )}
+                        {/* 重新预测按钮：创建新任务，从头开始预测 */}
+                        {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') && (
+                          <button
+                            onClick={() => handleRerun(task.task_id)}
+                            className="text-green-600 hover:text-green-900"
+                            title="创建新任务，从头开始重新预测所有样本"
+                          >
+                            重新预测
+                          </button>
+                        )}
+                        {/* 增量预测按钮：允许所有状态的任务 */}
+                        <button
+                          onClick={() => handleIncrementalPredict(task.task_id)}
+                          className="text-cyan-600 hover:text-cyan-900"
+                          title="继续预测未完成的样本"
+                        >
+                          增量预测
+                        </button>
+                        <button
+                          onClick={() => handleDelete(task.task_id)}
+                          className="text-red-600 hover:text-red-900"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* 分页 */}
+        {totalPages > 1 && (
+          <div className="mt-6 flex justify-center gap-2">
+            <button
+              onClick={() => setPage(Math.max(1, page - 1))}
+              disabled={page === 1}
+              className="px-4 py-2 border border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+            >
+              上一页
+            </button>
+            <span className="px-4 py-2">
+              第 {page} / {totalPages} 页（共 {total} 条）
+            </span>
+            <button
+              onClick={() => setPage(Math.min(totalPages, page + 1))}
+              disabled={page === totalPages}
+              className="px-4 py-2 border border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+            >
+              下一页
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 批量重新预测预览对话框 */}
@@ -1928,41 +1940,37 @@ export default function TasksPage() {
               <nav className="flex px-6">
                 <button
                   onClick={() => setConfigTab('basic')}
-                  className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${
-                    configTab === 'basic'
-                      ? 'border-blue-600 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  }`}
+                  className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${configTab === 'basic'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
                 >
                   🤖 基础配置
                 </button>
                 <button
                   onClick={() => setConfigTab('rag')}
-                  className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${
-                    configTab === 'rag'
-                      ? 'border-blue-600 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  }`}
+                  className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${configTab === 'rag'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
                 >
                   🔍 RAG 配置
                 </button>
                 <button
                   onClick={() => setConfigTab('llm')}
-                  className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${
-                    configTab === 'llm'
-                      ? 'border-blue-600 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  }`}
+                  className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${configTab === 'llm'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
                 >
                   ⚙️ LLM 配置
                 </button>
                 <button
                   onClick={() => setConfigTab('advanced')}
-                  className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${
-                    configTab === 'advanced'
-                      ? 'border-blue-600 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  }`}
+                  className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${configTab === 'advanced'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
                 >
                   🔧 高级配置
                 </button>
@@ -2265,18 +2273,17 @@ export default function TasksPage() {
                               model_provider: model.provider,
                               temperature: model.default_temperature,
                             })}
-                            className={`border-2 rounded-lg p-3 cursor-pointer transition-all ${
-                              editingConfig.model_name === model.id
-                                ? 'border-blue-500 bg-blue-50'
-                                : 'border-gray-200 hover:border-gray-300 bg-white'
-                            }`}
+                            className={`border-2 rounded-lg p-3 cursor-pointer transition-all ${editingConfig.model_name === model.id
+                              ? 'border-blue-500 bg-blue-50'
+                              : 'border-gray-200 hover:border-gray-300 bg-white'
+                              }`}
                           >
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
                                 <input
                                   type="radio"
                                   checked={editingConfig.model_name === model.id}
-                                  onChange={() => {}}
+                                  onChange={() => { }}
                                   className="w-4 h-4 text-blue-600"
                                 />
                                 <div>
